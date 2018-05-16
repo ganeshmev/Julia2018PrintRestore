@@ -4,7 +4,6 @@ from __future__ import absolute_import
 import octoprint.plugin
 from octoprint.events import eventManager, Events
 from flask import jsonify, make_response, request
-import RPi.GPIO as GPIO
 from octoprint.settings import settings
 # TODO:
 '''
@@ -14,22 +13,17 @@ autobooting shouldnt clash with touchscreen operation
 '''
 
 
-class Julia3GPrintResurrection(octoprint.plugin.StartupPlugin,
+class Julia2018PrintResurrection(octoprint.plugin.StartupPlugin,
 							   octoprint.plugin.EventHandlerPlugin,
 							   octoprint.plugin.SettingsPlugin,
 							   octoprint.plugin.TemplatePlugin,
 							   octoprint.plugin.BlueprintPlugin):
 	def initialize(self):
 		'''
-        Checks RPI.GPIO version
         Initialises board
         :return: None
         '''
-		self._logger.info("Running RPi.GPIO version '{0}'".format(GPIO.VERSION))
-		if GPIO.VERSION < "0.6":  # Need at least 0.6 for edge detection
-			raise Exception("RPi.GPIO must be greater than 0.6")
-		GPIO.setmode(GPIO.BCM)  # Use the board numbering scheme
-		GPIO.setwarnings(False)  # Disable GPIO warnings
+		self._logger.info("Print Resurrection Plugin ")
 
 	def on_after_startup(self):
 		'''
@@ -205,7 +199,8 @@ class Julia3GPrintResurrection(octoprint.plugin.StartupPlugin,
 				self._printer.set_temperature("tool1", self.tool1Target)
 			self._printer.home("z")
 			self._printer.home(["x", "y"])
-			commands = ["G90",
+			commands = ["M420 S1"
+						"G90",
 						"T{}".format(self.t),
 						"G92 E0",
 						"G1 F200 E5",
@@ -247,27 +242,27 @@ class Julia3GPrintResurrection(octoprint.plugin.StartupPlugin,
 		:return:
 		"""
 		return dict(
-			Julia3GPrintResurrection=dict(
-				displayName="Julia3GPrintResurrection",
+			Julia2018PrintResurrection=dict(
+				displayName="Julia2018PrintResurrection",
 				displayVersion=self._plugin_version,
 				# version check: github repository
 				type="github_release",
 				user="FracktalWorks",
-				repo="Julia3GPrintResurrection",
+				repo="Julia2018PrintResurrection",
 				current=self._plugin_version,
 
 				# update method: pip
-				pip="https://github.com/FracktalWorks/Julia3GPrintResurrection/archive/{target_version}.zip"
+				pip="https://github.com/FracktalWorks/Julia2018PrintResurrection/archive/{target_version}.zip"
 			)
 		)
 
-__plugin_name__ = "Julia3GPrintResurrection"
-__plugin_version__ = "1.0.2"
+__plugin_name__ = "Julia2018PrintResurrection"
+__plugin_version__ = "0.0.1"
 
 
 def __plugin_load__():
 	global __plugin_implementation__
-	__plugin_implementation__ = Julia3GPrintResurrection()
+	__plugin_implementation__ = Julia2018PrintResurrection()
 
 	global __plugin_hooks__
 	__plugin_hooks__ = {
