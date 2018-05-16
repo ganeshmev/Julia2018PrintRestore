@@ -1,0 +1,71 @@
+<h4>{{ _('Julia3G Print Resurrection') }}</h4>
+Information of current file stored
+<br>
+<form class="form-horizontal">
+
+    <div class="control-group">
+        <label class="control-label">{{ _('File Name') }}</label>
+        <div class="controls controls-row">
+            <div class="span8">
+                <input class="input-block-level" type="text" data-bind="value: settings.plugins.Julia3GPrintResurrection.fileName">
+            </div>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('File Path') }}</label>
+        <div class="controls controls-row">
+            <div class="span8">
+                <input class="input-block-level" type="text" data-bind="value: settings.plugins.Julia3GPrintResurrection.path">
+            </div>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label">{{ _('File Position:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('File Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.filePos">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('X Position:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('X Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.x">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('Y Position:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('Y Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.y">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('Z Position:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('Z Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.z">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('Extruder Position:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('E Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.e">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('Feedrate:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('F Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.f">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+        <div class="control-group">
+        <label class="control-label">{{ _('Active Tool:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('T Position') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia3GPrintResurrection.t">
+            <span class="add-on">ms</span>
+        </div>
+    </div>
+</form>
