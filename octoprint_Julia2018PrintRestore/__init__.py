@@ -140,7 +140,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 							self.data = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
 										"path": file["job"]["file"]["path"],
 										"tool0Target": temps["tool0"]["target"],
-										"bedTarget": temps["bed"]["target"]}
+										"bedTarget": temps["bed"]["target"],
+										 "lastPosition" : self._printer.last_position,
+										 "printerProfile":self._printer.profile}
+
+
+
 
 
 	# is logging was being done, stop it.
@@ -261,7 +266,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		# 	self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.fileName,
 		# 					  status_description="Print resurrection statred")
 		# # return an error or success
-		return jsonify(status='restored')
+		return jsonify(self.data)
 
 
 
