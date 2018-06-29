@@ -143,6 +143,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 										"bedTarget": temps["bed"]["target"],
 										 "lastPosition" : self._printer.last_position,
 										 "printerProfile":self._printer.profile}
+						except:
+							self.data = {"ERROR": "error"}
+							
 
 
 
@@ -203,7 +206,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 	def storageConnected(self):
 		"""
-		Checks if USB storage media is present, to which file progress withll be written
+		Checks if USB storage media is pres|ent, to which file progress withll be written
 		:param self:
 		:return: True is media is connected, else False.
 		"""
