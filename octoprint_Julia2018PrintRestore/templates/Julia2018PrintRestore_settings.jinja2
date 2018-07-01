@@ -1,0 +1,30 @@
+<h4>{{ _('Julia 2018 Print Restore') }}</h4>
+Information of current file stored, settings
+<br>
+<form class="form-horizontal">
+    <div class="control-group">
+        <label class="control-label">{{ _('Enabled:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('Enable/Dissable Print Restore') }}">
+            <select class="select-mini" data-bind="value: settings.plugins.Julia2018PrintRestore.enabled">
+                <option value=1>{{ _('ON') }}</option>
+                <option value=0>{{ _('OFF') }}</option>
+            </select>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label">{{ _('autoRestore:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('Enable/Dissable automatic restore on startup') }}">
+            <select class="select-mini" data-bind="value: settings.plugins.Julia2018PrintRestore.autoRestore">
+                <option value=1>{{ _('ON') }}</option>
+                <option value=0>{{ _('OFF') }}</option>
+            </select>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="control-label">{{ _('Save Progress Interval:') }}</label>
+        <div class="controls" data-toggle="tooltip" title="{{ _('Interval between saves') }}">
+            <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: settings.plugins.Julia2018PrintRestore.interval">
+            <span class="add-on">s</span>
+        </div>
+    </div>
+</form>

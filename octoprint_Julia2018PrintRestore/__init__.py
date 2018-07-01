@@ -7,6 +7,8 @@ from flask import jsonify, make_response, request
 from octoprint.settings import settings
 import time
 from threading import Timer
+import json
+import os
 # TODO:
 '''
 Auto Resurrect
@@ -14,21 +16,30 @@ Ask about ressurection when booting on OCtoprnt screen
 Autobooting shouldnt clash with touchscreen operation
 change code depending on number of toolheads
 '''
+class RepeatedTimer(object):
+	def __init__(self, interval, function, *args, **kwargs):
+		self._timer = None
+		self.interval = interval
+		self.function = function
+		self.args = args
+		self.kwargs = kwargs
+		self.is_running = False
 
-# def run_async(func):
-#     '''
-#     Function decorater to make methods run in a thread
-#     '''
-#     from threading import Thread
-#     from functools import wraps
-#
-#     @wraps(func)
-#     def async_func(*args, **kwargs):
-#         func_hl = Thread(target=func, args=args, kwargs=kwargs)
-#         func_hl.start()
-#         return func_hl
-#
-#     return async_func
+	def _run(self):
+		self.is_running = False
+		self.start()
+		self.function(*self.args, **self.kwargs)
+
+	def start(self):
+		if not self.is_running:
+			self._timer = Timer(self.interval, self._run)
+			self._timer.start()
+			self.is_running = True
+
+	def stop(self):
+		if self.is_running:
+			self._timer.cancel()
+			self.is_running = False
 
 
 class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
@@ -43,6 +54,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		:return: None
 		'''
 		self._logger.info("Print Restore Plugin initialised ")
+		self.savingProgressFlag = False
 
 	def on_after_startup(self):
 		'''
@@ -53,8 +65,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		#check if file is avilable
 		self.enabled = bool(self._settings.get(["enabled"]))
 		self.autoRestore = bool(self._settings.get(["autoRestore"]))
+		self.interval = float(self._settings.get(["interval"]))
 		#Initialise Repeated Timer Object
-
+		self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
 
 	def get_settings_defaults(self):
 		'''
@@ -63,7 +76,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         '''
 		return dict(
 			enabled=True,
-			autoRestore=False
+			autoRestore=False,
+			interval=1
 		)
 
 	'''+++++++++++++++ Octoprint Event Callback ++++++++++++++++++++'''
@@ -77,29 +91,30 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		'''
 
 		if event in (Events.CONNECTED):
-			if self.enabled and self.autoRestore:
-				if self.storageConnected():
-					if self.progressFileExists():
+			if self.enabled:
+				if self.progressFileExists():
+					if self.autoRestore:
 						self.restore()
+				else:
+					self.loadRestoreFile()
+
 
 		elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
 			if self.enabled:
-				if self.storageConnected():
-					self.deleteSavedProgress()
-					self.startSavingProgrss()
+				self.deleteSavedProgress()
+				self.startSavingProgrss()
 
 		elif event in Events.PRINT_PAUSED:
 			if self.savingProgressFlag:
 				self.stopSavingProgress()
 
-		elif event in (Events.PRINT_CANCELLED, Events.PRINT_DONE):
+		elif event in Events.PRINT_DONE:
 			if self.savingProgressFlag:
 				self.stopSavingProgress()
-			if self.storageConnected():
-				if self.progressFileExists():
-					self.deleteSavedProgress()
+			if self.progressFileExists():
+				self.deleteSavedProgress()
 
-		elif event in (Events.PRINT_FAILED):
+		elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED):
 			if self.savingProgressFlag:
 				self.stopSavingProgress()
 
@@ -110,9 +125,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		'''
 		starts the repeated timer that saves the progress
 		'''
+		self._logger.info("Save progress started, by setting Flag")
 		self.savingProgressFlag = True
 		self.writingToFile = False # flag to check if writing to file is in process, to make sure it multiple callbacks don't access the file
-
+		self.data = {}
+		self.position = {}
+		self.saveProgressRepeatedTimer.start()
 
 	def stopSavingProgress(self):
 		'''
@@ -120,108 +138,82 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		:return:
 		'''
 		self.savingProgressFlag = False
+		self._logger.info("Save progress stopped, by resetting Flag")
+		self.saveProgressRepeatedTimer.stop()
 
-
-
-	def saveProgress(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
-		'''
-		Saves print progress to a file last_position last_temperature printer_profile octoprint.printer.profile
-		:return:
-		'''
-
-		if self.savingProgressFlag:
-			if gcode and gcode == "G1" or gcode == "G0":
-				if "E" in cmd:
-					if not self.writingToFile:
-						try:
-							temps =  self._printer.get_current_temperatures()
-							file = self._printer.get_current_data()
-							# TODO: put conditional for number of extruders
-							self.data = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-										"path": file["job"]["file"]["path"],
-										"tool0Target": temps["tool0"]["target"],
-										"bedTarget": temps["bed"]["target"],
-										 "lastPosition" : self._printer.last_position,
-										 "printerProfile":self._printer.profile}
-						except:
-							self.data = {"ERROR": "error"}
-							
-
-
-
-
-
-	# is logging was being done, stop it.
-	# try:
-	# 	temps =  self._printer.get_current_temperatures()
-	# 	file = self._printer.get_current_data()
-	# 	self.data = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-	# 			"path": file["job"]["file"]["path"],
-	# 			"tool0Target": temps["tool0"]["target"],
-	# 			"tool1Target": temps["tool1"]["target"],
-	# 			"bedTarget": temps["bed"]["target"]}
-	# 	self.data["e"] = payload["position"]["e"]
-	# 	self.data["z"] = payload["position"]["z"]
-	# 	self.data["y"] = payload["position"]["y"]
-	# 	self.data["x"] = payload["position"]["x"]
-	# 	self.data["t"] = payload["position"]["t"]
-	# 	self.data["f"] = payload["position"]["f"]
-	# 	self._logger.info(self.data)
-	# 	self.on_settings_save(self.data)
-	# 	self.savingProgress = False
-	# 	self._logger.info("Print Resurrection: Print Progress saved")
-	# except:
-	# 	self.data = {"fileName": "None", "filePos": 0,
-	# 				 "path": "None",
-	# 				 "tool0Target": 0,
-	# 				 "tool1Target": 0,
-	# 				 "bedTarget": 0,
-	# 				 "x": 0,
-	# 				 "y": 0,
-	# 				 "z": 0,
-	# 				 "e": 0,
-	# 				 "t": 0,
-	# 				 "f": 0, }
-	# 	self.on_settings_save(self.data)
-	# 	self._logger.info("Could not save settings, restoring defaults")
 
 	def deleteSavedProgress(self):
 		'''
 		delets the progress file
 		:return:
 		'''
-		pass
-	def openProgressFile(self):
-		'''
-		Opens a file for writing the print progrss
-		:return:
-		'''
-		pass
-	def closeProgressFile(self):
-		'''
-		closes the print progrss file
-		:return:
-		'''
-		pass
+		if self.progressFileExists():
+			try:
+				os.remove('/home/pi/restore.json')
+				self._logger.info("Restore progress file was deleted")
+			except:
+				self._logger.info("Error deleting restore file")
 
-	def storageConnected(self):
-		"""
-		Checks if USB storage media is pres|ent, to which file progress withll be written
-		:param self:
-		:return: True is media is connected, else False.
-		"""
-		pass
+	def loadRestoreFile(self):
+		if self.progressFileExists():
+			try:
+				with open("/home/pi/restore.json") as restoreFile:
+					self.loadedData = json.load(restoreFile)
+					self._logger.info("Restore file opened")
+					return True
+			except:
+				self._logger.info("Error: could not open restore file")
+				return False
 
 	def progressFileExists(self):
 		'''
 		The restore file is present on the USB device and contains sane data
 		:return:
 		'''
-		pass
-		if True:
+		if os.path.isfile('/home/pi/restore.json'):
 			return True
 		else:
 			return False
+
+	def saveProgress(self):
+		'''
+		worker function that does the actual saving to file
+		:return:
+		'''
+		if not self.writingToFile:
+			self.writingToFile = True
+			with open('/home/pi/restore.json', 'w') as restoreFile:
+				json.dump(self.storeData, restoreFile)
+			self.writingToFile = False
+
+	def latestCommandSent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+		'''
+		notes the print information on the last sent command to the printer
+		:return:
+		'''
+		if self.savingProgressFlag:
+			try:
+				if gcode and gcode == "G1" or gcode == "G0":
+					if "X" in cmd:
+						self.position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
+					if "Y" in cmd:
+						self.position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
+					if "Z" in cmd:
+						self.position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+					if "E" in cmd:
+						self.position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
+					if "F" in cmd:
+						self.position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
+					temps = self._printer.get_current_temperatures()
+					file = self._printer.get_current_data()
+					self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
+								 "path": file["job"]["file"]["path"],
+								 "tool0Target": temps["tool0"]["target"],
+								 "bedTarget": temps["bed"]["target"],
+								 "position" : self.position}
+			except:
+				self._logger.info("Error getting latest command sent to printer")
+
 
 	@octoprint.plugin.BlueprintPlugin.route("/isFailureDetected", methods=["GET"])
 	def isFailureDetected(self):
@@ -229,14 +221,15 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		API to let client know that storage media has restoration file in it,
 		and restore is possible
 		'''
-		# if self.fileName != "None" and self._printer.is_ready():
-		# 	return jsonify(status='available', file = self.fileName)
-		# else:
-		# 	return jsonify(status='notAvailable')
 		if self.progressFileExists():
-			return jsonify(status = 'failureDetected')
+			try:
+				with open("/home/pi/restore.json") as restoreFile:
+					self.loadedData = json.load(restoreFile)
+					return jsonify(status="failureDetected", canRestore=True, file=self.loadedData["fileName"])
+			except:
+				return jsonify(status="failureDetected", canRestore=False)
 		else:
-			return jsonify(status = 'noFailureDetected')
+			return jsonify(status = "noFailureDetected", canRestore=False)
 
 
 	@octoprint.plugin.BlueprintPlugin.route("/restore", methods=["GET"])
@@ -244,32 +237,35 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		"""
 		Function that restores the print
 		"""
-		# if self.fileName != "None":
-		# 	if self.bedTarget > 0:
-		# 		self._printer.set_temperature("bed", self.bedTarget)
-		# 	if self.tool0Target > 0:
-		# 		self._printer.set_temperature("tool0", self.tool0Target)
-		# 	if self.tool1Target > 0:
-		# 		self._printer.set_temperature("tool1", self.tool1Target)
-		# 	self._printer.home("z")
-		# 	self._printer.home(["x", "y"])
-		# 	commands = ["M420 S1"
-		# 				"G90",
-		# 				"T{}".format(self.t),
-		# 				"G92 E0",
-		# 				"G1 F200 E5",
-		# 				"G1 F{}".format(self.f),
-		# 				"G92 E{}".format(self.e),
-		# 				"G1 X{} Y{}".format(self.x,self.y),
-		# 				"G1 Z{}".format(self.z)
-		# 				]
-		# 	self._printer.commands(commands)
-		# 	filenameToSelect = self._file_manager.path_on_disk("local", self.path)
-		# 	self._printer.select_file(path=filenameToSelect, sd=False, printAfterSelect=True, pos=self.filePos)
-		# 	self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.fileName,
-		# 					  status_description="Print resurrection statred")
-		# # return an error or success
-		return jsonify(self.data)
+		if self.progressFileExists():
+			try:
+				with open("/home/pi/restore.json") as restoreFile:
+					self.loadedData = json.load(restoreFile)
+				if self.loadedData["fileName"] != "None":
+					if self.loadedData["bedTarget"] > 0:
+						self._printer.set_temperature("bed", self.loadedData["bedTarget"])
+					if self.loadedData["tool0Target"] > 0:
+						self._printer.set_temperature("tool0", self.loadedData["tool0Target"])
+					self._printer.home("z")
+					self._printer.home(["x", "y"])
+					commands = ["M420 S1"
+								"G90",
+								"G92 E0",
+								"G1 F200 E5",
+								"G1 F{}".format(self.loadedData["position"]["F"]),
+								"G92 E{}".format(self.loadedData["position"]["E"]),
+								"G1 X{} Y{}".format(self.loadedData["position"]["X"],self.loadedData["position"]["Y"]),
+								"G1 Z{}".format(self.loadedData["position"]["Z"])
+								]
+					self._printer.commands(commands)
+					self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]), sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
+					self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
+									  status_description="Print resurrection statred")
+					return jsonify(status="Successfully Restored")
+			except:
+				return jsonify(status="Error: Cound not restore")
+		else:
+			return jsonify(status = "Error: Could not load restore file")
 
 
 
@@ -308,6 +304,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
 		self.enabled = bool(self._settings.get(["enabled"]))
 		self.autoRestore = bool(self._settings.get(["autoRestore"]))
+		self.interval = float(self._settings.get(["interval"]))
 		self._settings.save()
 
 	def get_update_information(self):
@@ -340,6 +337,6 @@ def __plugin_load__():
 	global __plugin_hooks__
 	__plugin_hooks__ = {
 		"octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
-		"octoprint.comm.protocol.gcode.sent": __plugin_implementation__.saveProgress
+		"octoprint.comm.protocol.gcode.sent": __plugin_implementation__.latestCommandSent
 	}
 
