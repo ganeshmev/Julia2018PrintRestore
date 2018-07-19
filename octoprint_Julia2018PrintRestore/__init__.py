@@ -127,7 +127,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		self._logger.info("Save progress started, by setting Flag")
 		self.savingProgressFlag = True
 		self.writingToFile = False # flag to check if writing to file is in process, to make sure it multiple callbacks don't access the file
-		self.data = {}
+		self.storeData = {}
 		self.position = {}
 		self.saveProgressRepeatedTimer.start()
 
@@ -180,8 +180,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		'''
 		if not self.writingToFile:
 			self.writingToFile = True
-			with open('/home/pi/restore.json', 'w') as restoreFile:
+			with open('/home/pi/restore.json.tmp', 'w') as restoreFile:
 				json.dump(self.storeData, restoreFile)
+				os.fsync(restoreFile)
+			os.rename('/home/pi/restore.json.tmp','/home/pi/restore.json')
 			self.writingToFile = False
 
 	def latestCommandSent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
@@ -220,15 +222,18 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		API to let client know that storage media has restoration file in it,
 		and restore is possible
 		'''
-		if self.progressFileExists():
-			try:
-				with open("/home/pi/restore.json") as restoreFile:
-					self.loadedData = json.load(restoreFile)
-					return jsonify(status="failureDetected", canRestore=True, file=self.loadedData["fileName"])
-			except:
-				return jsonify(status="failureDetected", canRestore=False)
+		if self._printer.is_printing() or self._printer.is_paused():
+			return jsonify(status="Printer is already printing", canRestore=False)
 		else:
-			return jsonify(status = "noFailureDetected", canRestore=False)
+			if self.progressFileExists():
+				try:
+					with open("/home/pi/restore.json") as restoreFile:
+						self.loadedData = json.load(restoreFile)
+						return jsonify(status="failureDetected", canRestore=True, file=self.loadedData["fileName"])
+				except:
+					return jsonify(status="failureDetected", canRestore=False)
+			else:
+				return jsonify(status="noFailureDetected", canRestore=False)
 
 
 	@octoprint.plugin.BlueprintPlugin.route("/restore", methods=["POST"])
@@ -295,6 +300,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			return make_response("Malformed JSON body in request", 400)
 		if all (item in data.keys() for item in ("autoRestore", "enabled", "interval")):
 			self.on_settings_save(data)
+			return make_response("Settings Saved",200)
+
 
 
 
