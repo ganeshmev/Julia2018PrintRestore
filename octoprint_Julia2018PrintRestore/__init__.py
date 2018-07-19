@@ -68,6 +68,14 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		self.interval = float(self._settings.get(["interval"]))
 		#Initialise Repeated Timer Object
 		self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
+		#get printer settings
+		if self._printer.profile["extruder"]["count"]>1:
+			self.isDual = True
+			self._logger.info("Print Restore: Dual Extruder Config")
+		else:
+			self.isDual =False
+			self._logger.info("Print Restore: Single Extruder Config")
+
 
 	def get_settings_defaults(self):
 		'''
