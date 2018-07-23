@@ -73,7 +73,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			self.isDual = True
 			self._logger.info("Print Restore: Dual Extruder Config")
 		else:
-			self.isDual =False
+			self.isDual = False
 			self._logger.info("Print Restore: Single Extruder Config")
 
 
@@ -97,32 +97,26 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		:param payload:
 		:return:
 		'''
-
-		if event in (Events.CONNECTED):
-			if self.enabled:
+		if self.enabled:
+			if event in (Events.CONNECTED):
 				if self.progressFileExists():
 					if self.autoRestore:
 						self.restore()
 				else:
 					self.loadRestoreFile()
 
-		elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
-			if self.enabled:
+			elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
 				self.deleteSavedProgress()
 				self.startSavingProgrss()
 
-		elif event in Events.PRINT_PAUSED:
-			if self.savingProgressFlag:
+			elif event in Events.PRINT_PAUSED:
 				self.stopSavingProgress()
 
-		elif event in Events.PRINT_DONE:
-			if self.savingProgressFlag:
+			elif event in Events.PRINT_DONE:
 				self.stopSavingProgress()
-			if self.progressFileExists():
 				self.deleteSavedProgress()
 
-		elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED):
-			if self.savingProgressFlag:
+			elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED):
 				self.stopSavingProgress()
 
 
@@ -251,14 +245,16 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		try:
 			with open("/home/pi/restore.json") as restoreFile:
 				self.loadedData = json.load(restoreFile)
-			if self.loadedData["fileName"] != "None":
+			if self.loadedData["fileName"] != "None": #file name is not none
 				if self.loadedData["bedTarget"] > 0:
 					self._printer.commands("M190 S{}".format(self.loadedData["bedTarget"]))
 				if self.isDual:
 					if self.loadedData["tool0Target"] > 0:
-						self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
+						self._printer.commands("M104 T0 S{}".format(self.loadedData["tool0Target"]))
 					if self.loadedData["tool1Target"] > 0:
 						self._printer.commands("M109 T1 S{}".format(self.loadedData["tool1Target"]))
+					if self.loadedData["tool0Target"] > 0:
+						self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
 					if "T" in self.loadedData["position"].keys():
 						self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
 				else:
@@ -281,6 +277,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
 								  status_description="Print resurrection statred")
 				return True
+			else: # file name is None
+				return False
 		except:
 			return False
 
@@ -306,7 +304,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			else:
 				return jsonify(status="noFailureDetected", canRestore=False)
 
-
 	@octoprint.plugin.BlueprintPlugin.route("/restore", methods=["POST"])
 	def restoreAPI(self):
 		"""
@@ -319,23 +316,26 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			data = request.json
 		except :
 			return make_response("Malformed JSON body in request", 400)
-		if data["restore"] == True:
-			if self.progressFileExists():
-				result = self.restore()
-				if result == True:
-					return jsonify(status="Successfully Restored")
+
+		if self._printer.is_printing() or self._printer.is_paused():
+			return jsonify(status="Printer is already printing", canRestore=False)
+		else:
+			if data["restore"] == True:
+				if self.progressFileExists():
+					result = self.restore()
+					if result == True:
+						return jsonify(status="Successfully Restored")
+					else:
+						return jsonify(status="Error: Could not restore")
 				else:
-					return jsonify(status="Error: Could not restore")
-			else:
-				return jsonify(status="Error: Could not restore, no progress file exists")
-		elif data["restore"] == False:
-			self.deleteSavedProgress()
-			return jsonify(status="Progress file discarded")
+					return jsonify(status="Error: Could not restore, no progress file exists")
+			elif data["restore"] == False:
+				self.deleteSavedProgress()
+				return jsonify(status="Progress file discarded")
 
 	@octoprint.plugin.BlueprintPlugin.route("/getSettings", methods=["GET"])
 	def getSettigns(self):
 		return jsonify(interval = self.interval, autoRestore = self.autoRestore, enabled = self.enabled)
-
 
 	@octoprint.plugin.BlueprintPlugin.route("/saveSettings", methods=["POST"])
 	def saveSettings(self):
@@ -388,6 +388,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		self.enabled = bool(self._settings.get(["enabled"]))
 		self.autoRestore = bool(self._settings.get(["autoRestore"]))
 		self.interval = float(self._settings.get(["interval"]))
+		if not self.enabled:
+			if self._printer.is_printing() or self._printer.is_paused():
+				self.stopSavingProgress()
+				self.deleteSavedProgress()
 
 	def get_update_information(self):
 		"""
