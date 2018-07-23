@@ -187,6 +187,22 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		:return:
 		'''
 		if not self.writingToFile:
+			temps = self._printer.get_current_temperatures()
+			file = self._printer.get_current_data()
+			if self.isDual:
+				self.storeData = {"fileName": file["job"]["file"]["name"],
+								  "filePos": file["progress"]["filepos"],
+								  "path": file["job"]["file"]["path"],
+								  "tool0Target": temps["tool0"]["target"],
+								  "tool1Target": temps["tool1"]["target"],
+								  "bedTarget": temps["bed"]["target"],
+								  "position": self.position}
+			else:
+				self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
+								  "path": file["job"]["file"]["path"],
+								  "tool0Target": temps["tool0"]["target"],
+								  "bedTarget": temps["bed"]["target"],
+								  "position": self.position}
 			self.writingToFile = True
 			with open('/home/pi/restore.json.tmp', 'w') as restoreFile:
 				json.dump(self.storeData, restoreFile)
@@ -198,6 +214,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		'''
 		notes the print information on the last sent command to the printer
 		:return:
+		self._currentTool
 		'''
 		if self.savingProgressFlag:
 			try:
@@ -212,15 +229,61 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 						self.position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
 					if "F" in cmd:
 						self.position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
-					temps = self._printer.get_current_temperatures()
-					file = self._printer.get_current_data()
-					self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-								 "path": file["job"]["file"]["path"],
-								 "tool0Target": temps["tool0"]["target"],
-								 "bedTarget": temps["bed"]["target"],
-								 "position" : self.position}
+				elif gcode and gcode =="M106":
+					if "S" in cmd:
+						self.position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
+				elif gcode and gcode =="M107":
+					if "S" in cmd:
+						self.position["FAN"] = 0
+				elif gcode and gcode =="T0":
+					self.position["T"] = 0
+				elif gcode and gcode =="T1":
+					self.position["T"] = 1
 			except:
 				self._logger.info("Error getting latest command sent to printer")
+
+
+	def restore(self):
+		'''
+		restores the print progress from saved file
+		:return:
+		'''
+		try:
+			with open("/home/pi/restore.json") as restoreFile:
+				self.loadedData = json.load(restoreFile)
+			if self.loadedData["fileName"] != "None":
+				if self.loadedData["bedTarget"] > 0:
+					self._printer.commands("M190 S{}".format(self.loadedData["bedTarget"]))
+				if self.isDual:
+					if self.loadedData["tool0Target"] > 0:
+						self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
+					if self.loadedData["tool1Target"] > 0:
+						self._printer.commands("M109 T1 S{}".format(self.loadedData["tool1Target"]))
+					if "T" in self.loadedData["position"].keys():
+						self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
+				else:
+					if self.loadedData["tool0Target"] > 0:
+						self._printer.commands("M109 S{}".format(self.loadedData["tool0Target"]))
+				if self.loadedData["position"]["FAN"] > 0:
+					self._printer.commands("M106 S{}".format(self.loadedData["position"]["FAN"]))
+				commands = ["M420 S1"
+							"G90",
+							"G92 E0",
+							"G1 F200 E5",
+							"G1 F{}".format(self.loadedData["position"]["F"]),
+							"G92 E{}".format(self.loadedData["position"]["E"]),
+							"G1 X{} Y{}".format(self.loadedData["position"]["X"], self.loadedData["position"]["Y"]),
+							"G1 Z{}".format(self.loadedData["position"]["Z"])
+							]
+				self._printer.commands(commands)
+				self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
+										  sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
+				self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
+								  status_description="Print resurrection statred")
+				return True
+		except:
+			return False
+
 
 	'''+++++++++++++++ API Functions ++++++++++++++++++++'''
 
@@ -245,7 +308,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 
 	@octoprint.plugin.BlueprintPlugin.route("/restore", methods=["POST"])
-	def restore(self):
+	def restoreAPI(self):
 		"""
 		Function that restores the print
 		"""
@@ -258,38 +321,16 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			return make_response("Malformed JSON body in request", 400)
 		if data["restore"] == True:
 			if self.progressFileExists():
-				try:
-					with open("/home/pi/restore.json") as restoreFile:
-						self.loadedData = json.load(restoreFile)
-					if self.loadedData["fileName"] != "None":
-						if self.loadedData["bedTarget"] > 0:
-							self._printer.set_temperature("bed", self.loadedData["bedTarget"])
-						if self.loadedData["tool0Target"] > 0:
-							self._printer.set_temperature("tool0", self.loadedData["tool0Target"])
-						self._printer.home("z")
-						self._printer.home(["x", "y"])
-						commands = ["M420 S1"
-									"G90",
-									"G92 E0",
-									"G1 F200 E5",
-									"G1 F{}".format(self.loadedData["position"]["F"]),
-									"G92 E{}".format(self.loadedData["position"]["E"]),
-									"G1 X{} Y{}".format(self.loadedData["position"]["X"],self.loadedData["position"]["Y"]),
-									"G1 Z{}".format(self.loadedData["position"]["Z"])
-									]
-						self._printer.commands(commands)
-						self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]), sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
-						self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
-										  status_description="Print resurrection statred")
-						return jsonify(status="Successfully Restored")
-				except:
-					return jsonify(status="Error: Cound not restore")
+				result = self.restore()
+				if result == True:
+					return jsonify(status="Successfully Restored")
+				else:
+					return jsonify(status="Error: Could not restore")
 			else:
-				return jsonify(status = "Error: Could not load restore file")
+				return jsonify(status="Error: Could not restore, no progress file exists")
 		elif data["restore"] == False:
 			self.deleteSavedProgress()
 			return jsonify(status="Progress file discarded")
-
 
 	@octoprint.plugin.BlueprintPlugin.route("/getSettings", methods=["GET"])
 	def getSettigns(self):
