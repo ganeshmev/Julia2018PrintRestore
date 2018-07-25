@@ -9,6 +9,6 @@
 ## Instalation:
 *Make sure you have the latest version of the respective TouchScreen UI. Check for updates before proceeding*
 
-1. Copy latest ZIP Source code link address from [here](https://github.com/FracktalWorks/Julia2018PrintRestore/releases)
+1. Copy latest SourceCode(zip) link address from [here](https://github.com/FracktalWorks/Julia2018PrintRestore/releases)
 2. On the Printers Octoprint Web Browser Instance, navigate to Settings > Plugin Manager and click "Get More..." button
 3. Paste the copied link from Step 1 in the "... from URL" space and click "Install"
