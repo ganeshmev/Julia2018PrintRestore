@@ -41,6 +41,14 @@ class RepeatedTimer(object):
 			self._timer.cancel()
 			self.is_running = False
 
+def boolConv(input):
+	if input == "true" or input == "True" or input == 1 or input == "1":
+		return True
+	elif input == "false" or input == "False" or input == 0 or input == "0":
+		return False
+	else:
+		return False
+
 
 class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 							   octoprint.plugin.EventHandlerPlugin,
@@ -54,6 +62,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		:return: None
 		'''
 		self._logger.info("Print Restore Plugin initialised ")
+		self.enabled = bool(boolConv(self._settings.get(["enabled"])))
+		self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
+		self.interval = float(self._settings.get(["interval"]))
 		self.savingProgressFlag = False
 
 	def on_after_startup(self):
@@ -62,14 +73,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         Also stores other basic settings
         :return: None
         '''
-		#check if file is avilable
-		self.enabled = bool(self._settings.get(["enabled"]))
-		self.autoRestore = bool(self._settings.get(["autoRestore"]))
-		self.interval = float(self._settings.get(["interval"]))
 		#Initialise Repeated Timer Object
 		self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
 		#get printer settings
-		if self._printer.profile["extruder"]["count"]>1:
+		if self._printer_profile_manager.get_current_or_default()["extruder"]["count"]>1:
 			self.isDual = True
 			self._logger.info("Print Restore: Dual Extruder Config")
 		else:
@@ -116,7 +123,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				self.stopSavingProgress()
 				self.deleteSavedProgress()
 
-			elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED):
+			elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED, Events.DISCONNECTED):
 				self.stopSavingProgress()
 
 
@@ -255,21 +262,29 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 						self._printer.commands("M109 T1 S{}".format(self.loadedData["tool1Target"]))
 					if self.loadedData["tool0Target"] > 0:
 						self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
+					self._printer.commands("T0")
+					self._printer.home("z")
+					self._printer.home(["x", "y"])
+					self._printer.commands("G1 X0 Y0 Z10 F9000")
 					if "T" in self.loadedData["position"].keys():
 						self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
 				else:
 					if self.loadedData["tool0Target"] > 0:
 						self._printer.commands("M109 S{}".format(self.loadedData["tool0Target"]))
-				if self.loadedData["position"]["FAN"] > 0:
-					self._printer.commands("M106 S{}".format(self.loadedData["position"]["FAN"]))
+						self._printer.home("z")
+						self._printer.home(["x", "y"])
+						self._printer.commands("G1 X0 Y0 Z5 F9000")
+				if "FAN" in self.loadedData["position"].keys():
+					if self.loadedData["position"]["FAN"] > 0:
+						self._printer.commands("M106 S{}".format(self.loadedData["position"]["FAN"]))
 				commands = ["M420 S1"
 							"G90",
 							"G92 E0",
 							"G1 F200 E5",
 							"G1 F{}".format(self.loadedData["position"]["F"]),
 							"G92 E{}".format(self.loadedData["position"]["E"]),
-							"G1 X{} Y{}".format(self.loadedData["position"]["X"], self.loadedData["position"]["Y"]),
-							"G1 Z{}".format(self.loadedData["position"]["Z"])
+							"G1 Z{}".format(self.loadedData["position"]["Z"]),
+							"G1 X{} Y{}".format(self.loadedData["position"]["X"], self.loadedData["position"]["Y"])
 							]
 				self._printer.commands(commands)
 				self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
@@ -385,13 +400,25 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		"""
 		octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
 		self._settings.save()
-		self.enabled = bool(self._settings.get(["enabled"]))
-		self.autoRestore = bool(self._settings.get(["autoRestore"]))
+		self.enabled = bool(boolConv(self._settings.get(["enabled"])))
+		self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
 		self.interval = float(self._settings.get(["interval"]))
+		self._logger.info("Print Restore: Settings Saved")
+		if self.saveProgressRepeatedTimer.interval != self.interval:
+			if self.savingProgressFlag:
+				self.stopSavingProgress()
+				self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
+				self.startSavingProgrss()
+			else:
+				self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
 		if not self.enabled:
 			if self._printer.is_printing() or self._printer.is_paused():
 				self.stopSavingProgress()
 				self.deleteSavedProgress()
+		else:
+			if self._printer.is_printing() or self._printer.is_paused():
+				self.startSavingProgrss()
+
 
 	def get_update_information(self):
 		"""
@@ -413,7 +440,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		)
 
 __plugin_name__ = "Julia2018PrintRestore"
-__plugin_version__ = "0.0.1"
+__plugin_version__ = "0.0.2"
 
 
 def __plugin_load__():
