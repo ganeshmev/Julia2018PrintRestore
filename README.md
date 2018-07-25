@@ -1,7 +1,7 @@
 # Julia2018PrintRestore Plugin
 
 ## How To Use:
-* If print was cancelled, or if any error occurred during print, printer will prompt if the file has to be restored on printer Restart
+* If print was cancelled, or if any error occurred during print, printer will prompt if the file has to be restored on printer restart
 * If power failed, the printer will prompt if the file has to be restored, when turning the printer on after power failure
 * if autoRestore is enabled from Settings > Julia2018PrintRestore on the Octoprint Browser Instance, the printer will automatically restore the print after power failure on restart
 
