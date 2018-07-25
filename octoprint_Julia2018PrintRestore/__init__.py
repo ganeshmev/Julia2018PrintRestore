@@ -76,12 +76,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		#Initialise Repeated Timer Object
 		self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
 		#get printer settings
-		if self._printer_profile_manager.get_current_or_default()["extruder"]["count"]>1:
-			self.isDual = True
-			self._logger.info("Print Restore: Dual Extruder Config")
-		else:
-			self.isDual = False
-			self._logger.info("Print Restore: Single Extruder Config")
 
 
 	def get_settings_defaults(self):
@@ -125,6 +119,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 			elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED, Events.DISCONNECTED):
 				self.stopSavingProgress()
+
+			elif event is Events.TOOL_CHANGE:
+				if self.savingProgressFlag:
+					self.position["T"] = payload["new"]
 
 
 	'''+++++++++++++++ Worker Functions ++++++++++++++++++++'''
@@ -190,20 +188,14 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		if not self.writingToFile:
 			temps = self._printer.get_current_temperatures()
 			file = self._printer.get_current_data()
-			if self.isDual:
-				self.storeData = {"fileName": file["job"]["file"]["name"],
-								  "filePos": file["progress"]["filepos"],
-								  "path": file["job"]["file"]["path"],
-								  "tool0Target": temps["tool0"]["target"],
-								  "tool1Target": temps["tool1"]["target"],
-								  "bedTarget": temps["bed"]["target"],
-								  "position": self.position}
-			else:
-				self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-								  "path": file["job"]["file"]["path"],
-								  "tool0Target": temps["tool0"]["target"],
-								  "bedTarget": temps["bed"]["target"],
-								  "position": self.position}
+			self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
+							  "path": file["job"]["file"]["path"],
+							  "tool0Target": temps["tool0"]["target"],
+							  "bedTarget": temps["bed"]["target"],
+							  "position": self.position}
+			if "tool1" in temps.keys():
+				if temps["tool1"]["target"] is not None:
+					self.storeData["tool1Target"] = temps["tool1"]["target"]
 			self.writingToFile = True
 			with open('/home/pi/restore.json.tmp', 'w') as restoreFile:
 				json.dump(self.storeData, restoreFile)
@@ -236,10 +228,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				elif gcode and gcode =="M107":
 					if "S" in cmd:
 						self.position["FAN"] = 0
-				elif gcode and gcode =="T0":
-					self.position["T"] = 0
-				elif gcode and gcode =="T1":
-					self.position["T"] = 1
 			except:
 				self._logger.info("Error getting latest command sent to printer")
 
@@ -252,31 +240,29 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		try:
 			with open("/home/pi/restore.json") as restoreFile:
 				self.loadedData = json.load(restoreFile)
+
 			if self.loadedData["fileName"] != "None": #file name is not none
 				if self.loadedData["bedTarget"] > 0:
 					self._printer.commands("M190 S{}".format(self.loadedData["bedTarget"]))
-				if self.isDual:
+				if "tool0Target" in self.loadedData.keys():
 					if self.loadedData["tool0Target"] > 0:
 						self._printer.commands("M104 T0 S{}".format(self.loadedData["tool0Target"]))
+				if "tool1Target" in self.loadedData.keys():
 					if self.loadedData["tool1Target"] > 0:
 						self._printer.commands("M109 T1 S{}".format(self.loadedData["tool1Target"]))
+				if "tool0Target" in self.loadedData.keys():
 					if self.loadedData["tool0Target"] > 0:
 						self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
-					self._printer.commands("T0")
-					self._printer.home("z")
-					self._printer.home(["x", "y"])
-					self._printer.commands("G1 X0 Y0 Z10 F9000")
-					if "T" in self.loadedData["position"].keys():
-						self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
-				else:
-					if self.loadedData["tool0Target"] > 0:
-						self._printer.commands("M109 S{}".format(self.loadedData["tool0Target"]))
-						self._printer.home("z")
-						self._printer.home(["x", "y"])
-						self._printer.commands("G1 X0 Y0 Z5 F9000")
+				self._printer.commands("T0")
+				self._printer.home("z")
+				self._printer.home(["x", "y"])
+				self._printer.commands("G1 X0 Y0 Z10 F9000")
+				if "T" in self.loadedData["position"].keys():
+					self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
 				if "FAN" in self.loadedData["position"].keys():
 					if self.loadedData["position"]["FAN"] > 0:
 						self._printer.commands("M106 S{}".format(self.loadedData["position"]["FAN"]))
+
 				commands = ["M420 S1"
 							"G90",
 							"G92 E0",
@@ -367,8 +353,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			return make_response("Settings Saved",200)
 
 
-
-
 	'''+++++++++++++++ Octoprint Helper Functions ++++++++++++++++++++'''
 
 
@@ -440,7 +424,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		)
 
 __plugin_name__ = "Julia2018PrintRestore"
-__plugin_version__ = "0.0.2"
+__plugin_version__ = "1.0.0"
 
 
 def __plugin_load__():
