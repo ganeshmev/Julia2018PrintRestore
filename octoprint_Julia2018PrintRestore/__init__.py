@@ -16,6 +16,17 @@ Ask about ressurection when booting on OCtoprnt screen
 Autobooting shouldnt clash with touchscreen operation
 change code depending on number of toolheads
 '''
+
+def isFloat(text):
+	try:
+		float(text)
+		# check for nan/infinity etc.
+		if text.isalpha():
+			return False
+		return True
+	except ValueError:
+		return False
+
 class RepeatedTimer(object):
 	def __init__(self, interval, function, *args, **kwargs):
 		self._timer = None
@@ -66,13 +77,14 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
 		self.interval = float(self._settings.get(["interval"]))
 		self.savingProgressFlag = False
+		self.babystep = 0
 
 	def on_after_startup(self):
 		'''
-        Method to check if resurection file is avialble during server startup
-        Also stores other basic settings
-        :return: None
-        '''
+		Method to check if resurection file is avialble during server startup
+		Also stores other basic settings
+		:return: None
+		'''
 		#Initialise Repeated Timer Object
 		self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
 		#get printer settings
@@ -80,9 +92,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 	def get_settings_defaults(self):
 		'''
-        initialises default parameters
-        :return:
-        '''
+		initialises default parameters
+		:return:
+		'''
 		return dict(
 			enabled=True,
 			autoRestore=False,
@@ -189,10 +201,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			temps = self._printer.get_current_temperatures()
 			file = self._printer.get_current_data()
 			self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-							  "path": file["job"]["file"]["path"],
-							  "tool0Target": temps["tool0"]["target"],
-							  "bedTarget": temps["bed"]["target"],
-							  "position": self.position}
+							"path": file["job"]["file"]["path"],
+							"tool0Target": temps["tool0"]["target"],
+							"bedTarget": temps["bed"]["target"],
+							"position": self.position,
+							"babystep": self.babystep
+						}
 			if "tool1" in temps.keys():
 				if temps["tool1"]["target"] is not None:
 					self.storeData["tool1Target"] = temps["tool1"]["target"]
@@ -228,6 +242,11 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				elif gcode and gcode =="M107":
 					if "S" in cmd:
 						self.position["FAN"] = 0
+				elif gcode and gcode=="M290":
+					if "Z" in cmd:
+						val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+						if isFloat(val):
+							self.babystep = self.babystep + float(val)
 			except:
 				self._logger.info("Error getting latest command sent to printer")
 
@@ -273,6 +292,11 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 							"G1 X{} Y{}".format(self.loadedData["position"]["X"], self.loadedData["position"]["Y"])
 							]
 				self._printer.commands(commands)
+
+				if "babystep" in self.loadedData.keys():
+					if self.loadedData["babystep"] > 0:
+						self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
+
 				self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
 										  sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
 				self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
