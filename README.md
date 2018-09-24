@@ -8,7 +8,7 @@
 ## Compatibility:
 * Julia Advanced, Julia2018AdvancedTouchUI 1.0.3 or higher
 * Julia Extended, Julia2018ExtendedTouchUI 1.0.21 or higher
-* Julia Pro Single, Julia2018ProSingleTouchUI 0.0.5 or higher
+* Julia Pro SingleJulia2018ProSingleTouchUI 0.0.5 or highers
 * Julia Pro Dual, Julia2018ProDualTouchUI 0.0.10 or higher
 
 ## Instalation:
