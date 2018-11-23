@@ -293,9 +293,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 							]
 				self._printer.commands(commands)
 
-				if "babystep" in self.loadedData.keys():
-					if self.loadedData["babystep"] > 0:
-						self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
+				# if "babystep" in self.loadedData.keys():
+				# 	if self.loadedData["babystep"] > 0:
+				# 		self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
 
 				self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
 										  sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
@@ -359,7 +359,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				return jsonify(status="Progress file discarded")
 
 	@octoprint.plugin.BlueprintPlugin.route("/getSettings", methods=["GET"])
-	def getSettigns(self):
+	def getSettings(self):
 		return jsonify(interval = self.interval, autoRestore = self.autoRestore, enabled = self.enabled)
 
 	@octoprint.plugin.BlueprintPlugin.route("/saveSettings", methods=["POST"])
@@ -448,7 +448,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		)
 
 __plugin_name__ = "Julia2018PrintRestore"
-__plugin_version__ = "1.1.0"
+__plugin_version__ = "1.1.1"
 
 
 def __plugin_load__():
