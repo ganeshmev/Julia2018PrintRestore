@@ -435,7 +435,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		"""
 		return dict(
 			Julia2018PrintRestore=dict(
-				displayName="Julia2018PrintRestore",
+				displayName="Julia Print Restore",
 				displayVersion=self._plugin_version,
 				# version check: github repository
 				type="github_release",
@@ -447,8 +447,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			)
 		)
 
-__plugin_name__ = "Julia2018PrintRestore"
-__plugin_version__ = "1.1.1"
+__plugin_name__ = "Julia Print Restore"
+__plugin_version__ = "1.1.2"
 
 
 def __plugin_load__():
