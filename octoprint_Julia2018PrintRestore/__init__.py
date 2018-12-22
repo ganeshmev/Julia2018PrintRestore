@@ -9,6 +9,7 @@ from flask import jsonify, make_response, request
 from threading import Timer
 import json
 import os
+import re
 # TODO:
 '''
 Auto Resurrect
@@ -81,6 +82,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         self.interval = float(self._settings.get(["interval"]))
         self.savingProgressFlag = False
         self.babystep = 0
+        self.isRestoring = False
 
     def on_after_startup(self):
         '''
@@ -100,7 +102,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         return dict(
             enabled=True,
             autoRestore=False,
-            interval=1
+            interval=1,
+            enableBabystep=None
         )
 
     '''+++++++++++++++ Octoprint Event Callback ++++++++++++++++++++'''
@@ -198,6 +201,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         worker function that does the actual saving to file
         :return:
         '''
+        if self.isRestoring:
+            return
+
         if not self.writingToFile:
             temps = self._printer.get_current_temperatures()
             file = self._printer.get_current_data()
@@ -206,7 +212,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                               "tool0Target": temps["tool0"]["target"],
                               "bedTarget": temps["bed"]["target"],
                               "position": self.position,
-                              "babystep": self.babystep
+                              "babystep": self.babystep if self._settings.get_boolean(["enableBabystep"]) else 0
                               }
             if "tool1" in temps.keys():
                 if temps["tool1"]["target"] is not None:
@@ -261,6 +267,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                 self.loadedData = json.load(restoreFile)
 
             if self.loadedData["fileName"] != "None":   # file name is not none
+                self._printer.commands("M117 RESTORE_STARTED")
+
                 if self.loadedData["bedTarget"] > 0:
                     self._printer.commands("M190 S{}".format(self.loadedData["bedTarget"]))
                 if "tool0Target" in self.loadedData.keys():
@@ -293,12 +301,15 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             ]
                 self._printer.commands(commands)
 
-                # if "babystep" in self.loadedData.keys():
-                # 	if self.loadedData["babystep"] > 0:
-                # 		self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
+                if "babystep" in self.loadedData.keys():
+                    if self.loadedData["babystep"] > 0:
+                        self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
 
                 self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
                                           sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
+
+                self._printer.commands("M117 RESTORE_COMPLETE")
+
                 self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
                                   status_description="Print resurrection statred")
                 return True
@@ -423,6 +434,33 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             if self._printer.is_printing() or self._printer.is_paused():
                 self.startSavingProgrss()
 
+    def printer_message_received_hook(self, comm, line, *args, **kwargs):
+        if "FIRMWARE_NAME" in line:
+            self._logger.info("FIRMWARE_NAME line: {}".format(line))
+
+            from octoprint.util.comm import parse_firmware_line
+            # Create a dict with all the keys/values returned by the M115 request
+            data = parse_firmware_line(line)
+
+            regex = r"Marlin J18([A-Z]{2})_([0-9]{6}_[0-9]{4})_HA"
+            matches = re.search(regex, data['FIRMWARE_NAME'])
+
+            enable_babystep = matches and len(matches.groups()) == 2 and matches.group(1) in ["PT", "PE"]
+            if self._settings.get_boolean(["enableBabystep"]) != enable_babystep:
+                self._settings.set_boolean(["enableBabystep"], enable_babystep)
+                self._settings.save()
+
+        return line
+
+    def print_restore_progress_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        if gcode and gcode == "M117":
+            if "RESTORE_STARTED" in cmd:
+                self._logger.info("RESTORE_STARTED")
+                self.isRestoring = True
+            elif "RESTORE_COMPLETE" in cmd:
+                self._logger.info("RESTORE_COMPLETE")
+                self.isRestoring = False
+
     def get_update_information(self):
         """
         Function for OTA update thrpugh the software update plugin
@@ -444,7 +482,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 
 __plugin_name__ = "Julia Print Restore"
-__plugin_version__ = "1.2.0"
+__plugin_version__ = "1.2.1"
 
 
 def __plugin_load__():
@@ -454,5 +492,7 @@ def __plugin_load__():
     global __plugin_hooks__
     __plugin_hooks__ = {
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
-        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.latestCommandSent
+        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.latestCommandSent,
+        "octoprint.comm.protocol.gcode.received": __plugin_implementation__.printer_message_received_hook,
+        "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.print_restore_progress_hook
     }
