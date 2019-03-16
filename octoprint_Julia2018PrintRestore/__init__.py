@@ -312,11 +312,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
                 self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
                                   status_description="Print resurrection statred")
-                return True
+                return (True, None)
             else:    # file name is None
-                return False
-        except:
-            return False
+                return (False, "Gcode file name is none")
+        except Exception as e:
+            self._logger.error(e.message)
+            return (False, e.message)
 
     '''+++++++++++++++ API Functions ++++++++++++++++++++'''
 
@@ -358,10 +359,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             if data["restore"] is True:
                 if self.progressFileExists():
                     result = self.restore()
-                    if result is True:
+                    if result[0] is True:
                         return jsonify(status="Successfully Restored")
                     else:
-                        return jsonify(status="Error: Could not restore")
+                        return jsonify(status="Error: Could not restore", error=result[1])
                 else:
                     return jsonify(status="Error: Could not restore, no progress file exists")
             elif data["restore"] is False:
