@@ -10,6 +10,7 @@ from threading import Timer
 import json
 import os
 import re
+import logging
 # TODO:
 '''
 Auto Resurrect
@@ -56,13 +57,13 @@ class RepeatedTimer(object):
             self.is_running = False
 
 
-def boolConv(input):
-    if input == "true" or input == "True" or input == 1 or input == "1":
-        return True
-    elif input == "false" or input == "False" or input == 0 or input == "0":
-        return False
-    else:
-        return False
+# def boolConv(input):
+#     if input == "true" or input == "True" or input == 1 or input == "1":
+#         return True
+#     elif input == "false" or input == "False" or input == 0 or input == "0":
+#         return False
+#     else:
+#         return False
 
 
 class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
@@ -70,19 +71,54 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             octoprint.plugin.SettingsPlugin,
                             octoprint.plugin.TemplatePlugin,
                             octoprint.plugin.BlueprintPlugin):
+
+    # __RESTORE_FILE = "/home/pi/print_restore.json"
+    # __TEMP_RESTORE_FILE = __RESTORE_FILE + ".tmp"
+    # __LOG_FILE = "/home/pi/.octoprint/logs/print_restore.log"
+
+    @property
+    def enabled(self):
+        return self._settings.get_boolean(["enabled"])
+
+    @property
+    def autoRestore(self):
+        return self._settings.get_boolean(["autoRestore"])
+
+    @property
+    def interval(self):
+        return self._settings.get_int(["interval"])
+
+    @property
+    def enableBabystep(self):
+        return self._settings.get_boolean(["enableBabystep"])
+
     '''+++++++++++++++ Octoprint Startup Functions ++++++++++++++++++++'''
     def initialize(self):
         '''
         Initialises board
         :return: None
         '''
-        self._logger.info("Print Restore Plugin initialised ")
-        self.enabled = bool(boolConv(self._settings.get(["enabled"])))
-        self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
-        self.interval = float(self._settings.get(["interval"]))
-        self.savingProgressFlag = False
-        self.babystep = 0
-        self.isRestoring = False
+        self._logger.info("Print Restore plugin initialised")
+
+        fh = logging.handlers.RotatingFileHandler(self._settings.get_plugin_logfile_path(postfix="debug"), maxBytes=(2 * 1024 * 1024))
+        fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        # fh.setLevel(logging.DEBUG)
+        self._logger.addHandler(fh)
+
+        basedir = self._settings.getBaseFolder("base")
+        if basedir is not None and os.path.exists(basedir):
+            self.__RESTORE_FILE = os.path.join(basedir, "print_restore.json")
+        else:
+            self.__RESTORE_FILE = "/home/pi/print_restore.json"
+        self.__TEMP_RESTORE_FILE = self.__RESTORE_FILE + ".tmp"
+
+        # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
+        # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
+        # self.interval = float(self._settings.get(["interval"]))
+        self.state_position = {}
+        self.state_babystep = 0
+        self.flag_is_saving_state = False
+        self.flag_restore_in_progress = False
 
     def on_after_startup(self):
         '''
@@ -91,7 +127,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         :return: None
         '''
         # Initialise Repeated Timer Object
-        self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
+        self.init_print_state_monitor()
         # get printer settings
 
     def get_settings_defaults(self):
@@ -117,212 +153,230 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         '''
         if self.enabled:
             if event in (Events.CONNECTED):
-                if self.progressFileExists():
+                if self.check_restore_file_exists():
                     if self.autoRestore:
-                        self.restore()
-                else:
-                    self.loadRestoreFile()
+                        self.start_restore()
+                # else:
+                #     self.parse_restore_file()
 
             elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
-                self.deleteSavedProgress()
-                self.startSavingProgrss()
+                self.delete_restore_file()
+                self.start_printer_state_monitor()
 
             elif event in Events.PRINT_PAUSED:
-                self.stopSavingProgress()
+                self.stop_printer_state_monitor()
 
             elif event in Events.PRINT_DONE:
-                self.stopSavingProgress()
-                self.deleteSavedProgress()
+                self.stop_printer_state_monitor()
+                self.delete_restore_file()
 
             elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED, Events.DISCONNECTED):
-                self.stopSavingProgress()
+                self.stop_printer_state_monitor()
 
             elif event is Events.TOOL_CHANGE:
-                if self.savingProgressFlag:
-                    self.position["T"] = payload["new"]
+                if self.flag_is_saving_state:
+                    self.state_position["T"] = payload["new"]
 
     '''+++++++++++++++ Worker Functions ++++++++++++++++++++'''
+    def init_print_state_monitor(self):
+        if self._timer_printer_state_monitor is None:
+            self._timer_printer_state_monitor = RepeatedTimer(self.interval, self.write_restore_file)
 
-    def startSavingProgrss(self):
-        '''
-        starts the repeated timer that saves the progress
-        '''
-        self._logger.info("Save progress started, by setting Flag")
-        self.savingProgressFlag = True
-        self.writingToFile = False  # flag to check if writing to file is in process, to make sure it multiple callbacks don't access the file
-        self.storeData = {}
-        self.position = {}
-        self.saveProgressRepeatedTimer.start()
+    def start_printer_state_monitor(self):
+        """Start monitoring and saving printer state
+        """
+        self._logger.info("Printer state monitor started")
+        self.flag_is_saving_state = True
+        self.flag_restore_file_write_in_progress = False
+        self.state_position = {}
+        self._timer_printer_state_monitor.start()
 
-    def stopSavingProgress(self):
+    def stop_printer_state_monitor(self):
         '''
         Stops the repeated timer that saves progress
         :return:
         '''
-        self.savingProgressFlag = False
-        self._logger.info("Save progress stopped, by resetting Flag")
-        self.saveProgressRepeatedTimer.stop()
+        self.flag_is_saving_state = False
+        self._logger.info("Printer state monitor stopped")
+        self._timer_printer_state_monitor.stop()
+        self._timer_printer_state_monitor = None
 
-    def deleteSavedProgress(self):
-        '''
-        delets the progress file
-        :return:
-        '''
-        if self.progressFileExists():
-            try:
-                os.remove('/home/pi/restore.json')
-                self._logger.info("Restore progress file was deleted")
-            except:
-                self._logger.info("Error deleting restore file")
-
-    def loadRestoreFile(self):
-        if self.progressFileExists():
-            try:
-                with open("/home/pi/restore.json") as restoreFile:
-                    self.loadedData = json.load(restoreFile)
-                    self._logger.info("Restore file opened")
-                    return True
-            except:
-                self._logger.info("Error: could not open restore file")
-                return False
-
-    def progressFileExists(self):
+    def check_restore_file_exists(self):
         '''
         The restore file is present on the USB device and contains sane data
         :return:
         '''
-        if os.path.isfile('/home/pi/restore.json'):
+        if os.path.isfile(self.__RESTORE_FILE):
             return True
         else:
             return False
 
-    def saveProgress(self):
+    def write_restore_file(self):
         '''
         worker function that does the actual saving to file
         :return:
         '''
-        if self.isRestoring:
+        if self.flag_restore_in_progress or self.flag_restore_file_write_in_progress:
             return
 
-        if not self.writingToFile:
-            temps = self._printer.get_current_temperatures()
-            file = self._printer.get_current_data()
-            self.storeData = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
-                              "path": file["job"]["file"]["path"],
-                              "tool0Target": temps["tool0"]["target"],
-                              "bedTarget": temps["bed"]["target"],
-                              "position": self.position,
-                              "babystep": self.babystep if self._settings.get_boolean(["enableBabystep"]) else 0
-                              }
-            if "tool1" in temps.keys():
-                if temps["tool1"]["target"] is not None:
-                    self.storeData["tool1Target"] = temps["tool1"]["target"]
-            self.writingToFile = True
-            with open('/home/pi/restore.json.tmp', 'w') as restoreFile:
-                json.dump(self.storeData, restoreFile)
-                os.fsync(restoreFile)
-            os.rename('/home/pi/restore.json.tmp', '/home/pi/restore.json')
-            self.writingToFile = False
+        temps = self._printer.get_current_temperatures()
+        file = self._printer.get_current_data()
+        data = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
+                "path": file["job"]["file"]["path"],
+                "tool0Target": temps["tool0"]["target"],
+                "bedTarget": temps["bed"]["target"],
+                "position": self.state_position,
+                "babystep": self.state_babystep if self.enableBabystep else 0
+                }
+        if "tool1" in temps.keys():
+            if temps["tool1"]["target"] is not None:
+                data["tool1Target"] = temps["tool1"]["target"]
+        self.flag_restore_file_write_in_progress = True
+        with open(self.__TEMP_RESTORE_FILE, 'w') as restoreFile:
+            json.dump(data, restoreFile)
+            os.fsync(restoreFile)
+        os.rename(self.__TEMP_RESTORE_FILE, self.__RESTORE_FILE)
+        self.flag_restore_file_write_in_progress = False
 
-    def latestCommandSent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+    def parse_restore_file(self, log=False):
+        if self.check_restore_file_exists():
+            try:
+                with open(self.__RESTORE_FILE) as f:
+                    txt = f.read()
+                    txt = txt.encode('ascii', 'ignore')
+                    txt = "".join(c for c in txt if 31 < ord(c) < 127)
+                    try:
+                        data = json.loads(txt)
+                        if log:
+                            self._logger.info("Print restore data:\n" + json.dumps(data))
+                        return (True, data)
+                    except Exception as e:
+                        self._logger.error("Invalid JSON data in restore file: {}\n{}".format(txt, e.message))
+            except Exception as e:
+                self._logger.error("Could not open restore file\n" + e.message)
+        return (False, None)
+
+    def delete_restore_file(self):
+        '''
+        delets the progress file
+        :return:
+        '''
+        if self.check_restore_file_exists():
+            try:
+                os.remove(self.__RESTORE_FILE)
+                self._logger.info("Restore progress file was deleted")
+            except:
+                self._logger.info("Error deleting restore file")
+
+    def gcode_sent_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
         '''
         notes the print information on the last sent command to the printer
         :return:
         self._currentTool
         '''
-        if self.savingProgressFlag:
+        if not gcode:
+            return
+
+        if self.flag_is_saving_state:
             try:
-                if gcode and gcode == "G1" or gcode == "G0":
+                if gcode == "G1" or gcode == "G0":
                     if "X" in cmd:
-                        self.position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
+                        self.state_position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
                     if "Y" in cmd:
-                        self.position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
+                        self.state_position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
                     if "Z" in cmd:
-                        self.position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+                        self.state_position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
                     if "E" in cmd:
-                        self.position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
+                        self.state_position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
                     if "F" in cmd:
-                        self.position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
-                elif gcode and gcode == "M106":
+                        self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
+                elif gcode == "M106":
                     if "S" in cmd:
-                        self.position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
-                elif gcode and gcode == "M107":
+                        self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
+                elif gcode == "M107":
                     if "S" in cmd:
-                        self.position["FAN"] = 0
-                elif gcode and gcode == "M290":
+                        self.state_position["FAN"] = 0
+                elif gcode == "M290":
                     if "Z" in cmd:
                         val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
                         if isFloat(val):
-                            self.babystep = self.babystep + float(val)
+                            self.state_babystep = self.state_babystep + float(val)
             except:
                 self._logger.info("Error getting latest command sent to printer")
 
-    def restore(self):
+    def start_restore(self):
         '''
         restores the print progress from saved file
         :return:
         '''
         try:
-            with open("/home/pi/restore.json") as restoreFile:
-                self.loadedData = json.load(restoreFile)
+            restore_state = self.parse_restore_file()
+            if not restore_state[0]:
+                raise Exception("Did not load data")
 
-            if self.loadedData["fileName"] != "None":   # file name is not none
+            data = restore_state[1]
+
+            if data["fileName"] != "None":   # file name is not none
                 self._printer.commands("M117 RESTORE_STARTED")
 
-                if self.loadedData["bedTarget"] > 0:
-                    self._printer.commands("M190 S{}".format(self.loadedData["bedTarget"]))
-                if "tool0Target" in self.loadedData.keys():
-                    if self.loadedData["tool0Target"] > 0:
-                        self._printer.commands("M104 T0 S{}".format(self.loadedData["tool0Target"]))
-                if "tool1Target" in self.loadedData.keys():
-                    if self.loadedData["tool1Target"] > 0:
-                        self._printer.commands("M109 T1 S{}".format(self.loadedData["tool1Target"]))
-                if "tool0Target" in self.loadedData.keys():
-                    if self.loadedData["tool0Target"] > 0:
-                        self._printer.commands("M109 T0 S{}".format(self.loadedData["tool0Target"]))
+                if data["bedTarget"] > 0:
+                    self._printer.commands("M190 S{}".format(data["bedTarget"]))
+                if "tool0Target" in data.keys():
+                    if data["tool0Target"] > 0:
+                        self._printer.commands("M104 T0 S{}".format(data["tool0Target"]))
+                if "tool1Target" in data.keys():
+                    if data["tool1Target"] > 0:
+                        self._printer.commands("M104 T1 S{}".format(data["tool1Target"]))
+                if "tool0Target" in data.keys():
+                    if data["tool0Target"] > 0:
+                        self._printer.commands("M109 T0 S{}".format(data["tool0Target"]))
+                if "tool1Target" in data.keys():
+                    if data["tool1Target"] > 0:
+                        self._printer.commands("M109 T1 S{}".format(data["tool1Target"]))
                 self._printer.commands("T0")
                 self._printer.home("z")
                 self._printer.home(["x", "y"])
                 # self._printer.commands("G1 X0 Y0 Z10 F9000")
-                if "T" in self.loadedData["position"].keys():
-                    self._printer.commands("T{}".format(self.loadedData["position"]["T"]))
-                if "FAN" in self.loadedData["position"].keys():
-                    if self.loadedData["position"]["FAN"] > 0:
-                        self._printer.commands("M106 S{}".format(self.loadedData["position"]["FAN"]))
+                if "T" in data["position"].keys():
+                    self._printer.commands("T{}".format(data["position"]["T"]))
+                if "FAN" in data["position"].keys():
+                    if data["position"]["FAN"] > 0:
+                        self._printer.commands("M106 S{}".format(data["position"]["FAN"]))
 
                 commands = ["M420 S1"
                             "G90",
                             "G92 E0",
                             "G1 F200 E5",
-                            "G1 F{}".format(self.loadedData["position"]["F"]),
-                            "G92 E{}".format(self.loadedData["position"]["E"]),
-                            "G1 Z{}".format(self.loadedData["position"]["Z"]),
-                            "G1 X{} Y{}".format(self.loadedData["position"]["X"], self.loadedData["position"]["Y"])
+                            "G1 F{}".format(data["position"]["F"]),
+                            "G92 E{}".format(data["position"]["E"]),
+                            "G1 X{} Y{}".format(data["position"]["X"], data["position"]["Y"]),
+                            "G1 Z{}".format(data["position"]["Z"]),
                             ]
                 self._printer.commands(commands)
 
-                if "babystep" in self.loadedData.keys():
-                    if self.loadedData["babystep"] > 0:
-                        self._printer.commands("M290 Z{}".format(self.loadedData["babystep"]))
+                if "babystep" in data.keys():
+                    if data["babystep"] != 0:
+                        self._printer.commands("M290 Z{}".format(data["babystep"]))
 
-                self._printer.select_file(path=self._file_manager.path_on_disk("local", self.loadedData["fileName"]),
-                                          sd=False, printAfterSelect=True, pos=self.loadedData["filePos"])
+                self._printer.select_file(path=self._file_manager.path_on_disk("local", data["fileName"]),
+                                          sd=False, printAfterSelect=True, pos=data["filePos"])
 
                 self._printer.commands("M117 RESTORE_COMPLETE")
 
-                self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=self.loadedData["fileName"],
-                                  status_description="Print resurrection statred")
+                self._send_status(status_type="PRINT_RESURRECTION_STARTED", status_value=data["fileName"],
+                                  status_description="Print resurrection started")
                 return (True, None)
             else:    # file name is None
+                self._logger.error("Did not find print job filename in restore file\n" + json.dumps(data))
                 return (False, "Gcode file name is none")
         except Exception as e:
-            self._logger.error(e.message)
+            self._logger.error("Restore error\n" + e.message)
             return (False, e.message)
 
     '''+++++++++++++++ API Functions ++++++++++++++++++++'''
 
     @octoprint.plugin.BlueprintPlugin.route("/isFailureDetected", methods=["GET"])
-    def isFailureDetected(self):
+    def route_check_restore_file(self):
         '''
         API to let client know that storage media has restoration file in it,
         and restore is possible
@@ -330,18 +384,17 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         if self._printer.is_printing() or self._printer.is_paused():
             return jsonify(status="Printer is already printing", canRestore=False)
         else:
-            if self.progressFileExists():
-                try:
-                    with open("/home/pi/restore.json") as restoreFile:
-                        self.loadedData = json.load(restoreFile)
-                        return jsonify(status="failureDetected", canRestore=True, file=self.loadedData["fileName"])
-                except:
+            if self.check_restore_file_exists():
+                restore_state = self.parse_restore_file()
+                if restore_state[0] and "fileName" in restore_state[1].keys():
+                    return jsonify(status="failureDetected", canRestore=True, file=restore_state[1]["fileName"])
+                else:
                     return jsonify(status="failureDetected", canRestore=False)
             else:
                 return jsonify(status="noFailureDetected", canRestore=False)
 
     @octoprint.plugin.BlueprintPlugin.route("/restore", methods=["POST"])
-    def restoreAPI(self):
+    def route_restore(self):
         """
         Function that restores the print
         """
@@ -357,25 +410,24 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             return jsonify(status="Printer is already printing", canRestore=False)
         else:
             if data["restore"] is True:
-                if self.progressFileExists():
-                    result = self.restore()
+                if self.check_restore_file_exists():
+                    result = self.start_restore()
                     if result[0] is True:
                         return jsonify(status="Successfully Restored")
                     else:
                         return jsonify(status="Error: Could not restore", error=result[1])
                 else:
                     return jsonify(status="Error: Could not restore, no progress file exists")
-            elif data["restore"] is False:
-                self.deleteSavedProgress()
+            else:
+                self.delete_restore_file()
                 return jsonify(status="Progress file discarded")
 
     @octoprint.plugin.BlueprintPlugin.route("/getSettings", methods=["GET"])
-    def getSettings(self):
+    def route_get_settings(self):
         return jsonify(interval=self.interval, autoRestore=self.autoRestore, enabled=self.enabled)
 
     @octoprint.plugin.BlueprintPlugin.route("/saveSettings", methods=["POST"])
-    def saveSettings(self):
-
+    def route_save_settings(self):
         if "application/json" not in request.headers["Content-Type"]:
             return make_response("Expected content type JSON", 400)
 
@@ -416,29 +468,28 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         """
         octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
         self._settings.save()
-        self.enabled = bool(boolConv(self._settings.get(["enabled"])))
-        self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
-        self.interval = float(self._settings.get(["interval"]))
-        self._logger.info("Print Restore: Settings Saved")
-        if self.saveProgressRepeatedTimer.interval != self.interval:
-            if self.savingProgressFlag:
-                self.stopSavingProgress()
-                self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
-                self.startSavingProgrss()
+        # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
+        # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
+        # self.interval = float(self._settings.get(["interval"]))
+        self._logger.info("Print Restore settings saved")
+        if self._timer_printer_state_monitor.interval != self.interval:
+            if self.flag_is_saving_state:
+                self.stop_printer_state_monitor()
+                self.init_print_state_monitor()
+                self.start_printer_state_monitor()
             else:
-                self.saveProgressRepeatedTimer = RepeatedTimer(self.interval, self.saveProgress)
+                self.init_print_state_monitor()
         if not self.enabled:
             if self._printer.is_printing() or self._printer.is_paused():
-                self.stopSavingProgress()
-                self.deleteSavedProgress()
+                self.stop_printer_state_monitor()
+                self.delete_restore_file()
         else:
             if self._printer.is_printing() or self._printer.is_paused():
-                self.startSavingProgrss()
+                self.start_printer_state_monitor()
 
-    def printer_message_received_hook(self, comm, line, *args, **kwargs):
+    def gcode_received_hook(self, comm, line, *args, **kwargs):
         if "FIRMWARE_NAME" in line:
-            self._logger.info("FIRMWARE_NAME line: {}".format(line))
-
+            # self._logger.info("FIRMWARE_NAME line: {}".format(line))
             from octoprint.util.comm import parse_firmware_line
             # Create a dict with all the keys/values returned by the M115 request
             data = parse_firmware_line(line)
@@ -447,7 +498,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             matches = re.search(regex, data['FIRMWARE_NAME'])
 
             enable_babystep = matches and len(matches.groups()) == 2 and matches.group(1) in ["PT", "PE"]
-            if self._settings.get_boolean(["enableBabystep"]) != enable_babystep:
+            if self.enableBabystep != enable_babystep:
                 self._settings.set_boolean(["enableBabystep"], enable_babystep)
                 self._settings.save()
 
@@ -457,10 +508,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         if gcode and gcode == "M117":
             if "RESTORE_STARTED" in cmd:
                 self._logger.info("RESTORE_STARTED")
-                self.isRestoring = True
+                self.flag_restore_in_progress = True
             elif "RESTORE_COMPLETE" in cmd:
                 self._logger.info("RESTORE_COMPLETE")
-                self.isRestoring = False
+                self.flag_restore_in_progress = False
 
     def get_update_information(self):
         """
@@ -493,7 +544,7 @@ def __plugin_load__():
     global __plugin_hooks__
     __plugin_hooks__ = {
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
-        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.latestCommandSent,
-        "octoprint.comm.protocol.gcode.received": __plugin_implementation__.printer_message_received_hook,
+        "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.gcode_sent_hook,
+        "octoprint.comm.protocol.gcode.received": __plugin_implementation__.gcode_received_hook,
         "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.print_restore_progress_hook
     }
