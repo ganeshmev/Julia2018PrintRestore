@@ -1,1 +1,3 @@
 include README.md
+include versioneer.py
+include octoprint_Julia2018PrintRestore/_version.py
