@@ -4,6 +4,7 @@ from __future__ import absolute_import
 import octoprint.plugin
 from octoprint.events import Events
 from flask import jsonify, make_response, request
+from octoprint.util.comm import parse_firmware_line
 # from octoprint.settings import settings
 # import time
 from threading import Timer
@@ -15,25 +16,6 @@ import logging
 from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions
-
-# TODO:
-'''
-Auto Resurrect
-Ask about ressurection when booting on OCtoprnt screen
-Autobooting shouldnt clash with touchscreen operation
-change code depending on number of toolheads
-'''
-
-
-# def isFloat(text):
-#     try:
-#         float(text)
-#         # check for nan/infinity etc.
-#         if text.isalpha():
-#             return False
-#         return True
-#     except ValueError:
-#         return False
 
 
 class RepeatedTimer(object):
@@ -74,15 +56,6 @@ class RepeatedTimer(object):
             self.is_running = False
 
 
-# def boolConv(input):
-#     if input == "true" or input == "True" or input == 1 or input == "1":
-#         return True
-#     elif input == "false" or input == "False" or input == 0 or input == "0":
-#         return False
-#     else:
-#         return False
-
-
 class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             octoprint.plugin.EventHandlerPlugin,
                             octoprint.plugin.SettingsPlugin,
@@ -91,7 +64,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             octoprint.plugin.BlueprintPlugin):
     """OctoPrint print restore plugin for Fracktal Works 3D printers."""
 
-    # region "User Prefeences"
+    # region "Plugin settings"
     @property
     def enabled(self):
         """(bool) Get print restore enabled state plugin setting."""
@@ -111,6 +84,20 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
     def enableBabystep(self):
         """(bool) Get babystep monitor enabled state plugin setting."""
         return self._settings.get_boolean(["enableBabystep"])
+    # endregion
+
+    # region "IPC"
+    def _send_status(self, status_type, status_value, status_description=""):
+        """Send data to all registered mesage reveivers
+
+        Args:
+            status_type (str): Type of status message.
+            status_value (any): Actual message.
+            status_description (str, optional): Defaults to "". Human readable message description.
+        """
+        self._plugin_manager.send_plugin_message(self._identifier,
+                                                 dict(type="status", status_type=status_type, status_value=status_value,
+                                                      status_description=status_description))
     # endregion
 
     # region "Printer state monitor"
@@ -202,8 +189,71 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                 self._logger.info("Restore progress file was deleted")
             except:
                 self._logger.info("Error deleting restore file")
+
+    def detect_babystep_support(self, line):
+        """Check if firmware has support for babystep. Use to check if babystep needs to be saved.
+
+        Args:
+            line (str): The line received from the printer.
+
+        Returns:
+            str: Modified or untouched line
+        """
+        if "FIRMWARE_NAME" in line:
+            # self._logger.info("FIRMWARE_NAME line: {}".format(line))
+            # Create a dict with all the keys/values returned by the M115 request
+            data = parse_firmware_line(line)
+
+            regex = r"Marlin J18([A-Z]{2})_([0-9]{6}_[0-9]{4})_HA"
+            matches = re.search(regex, data['FIRMWARE_NAME'])
+
+            enable_babystep = matches and len(matches.groups()) == 2 and matches.group(1) in ["PT", "PE"]
+            if self.enableBabystep != enable_babystep:
+                self._settings.set_boolean(["enableBabystep"], enable_babystep)
+                self._settings.save()
+        return line
+
+    def record_current_state(self, gcode, cmd):
+        """Log current position and temperatures of the printer for saving to restore file.
+
+        Args:
+            gcode (str): Parsed GCODE command. None if no known command could be parsed.
+            cmd (str): Command to be sent to the printer.
+        """
+        if not gcode:
+            return
+
+        if self.flag_is_saving_state:
+            try:
+                if gcode == "G1" or gcode == "G0":
+                    if "X" in cmd:
+                        self.state_position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
+                    if "Y" in cmd:
+                        self.state_position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
+                    if "Z" in cmd:
+                        self.state_position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+                    if "E" in cmd:
+                        self.state_position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
+                    if "F" in cmd:
+                        self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
+                elif gcode == "M106":
+                    if "S" in cmd:
+                        self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
+                elif gcode == "M107":
+                    if "S" in cmd:
+                        self.state_position["FAN"] = 0
+                elif gcode == "M290":
+                    if "Z" in cmd:
+                        val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+                        try:
+                            self.state_babystep = self.state_babystep + float(val)
+                        except Exception as e:
+                            self._logger.error("Could not parse babystep: " + e.message)
+            except:
+                self._logger.info("Error getting latest command sent to printer")
     # endregion
 
+    # region "Print Restore"
     def start_restore(self):
         """Try to restore the failed print.
         Initialize printer temperatures and position to last known state.
@@ -274,6 +324,24 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         except Exception as e:
             self._logger.error("Restore error\n" + e.message)
             return (False, e.message)
+
+    def detect_restore_phase(self, gcode, cmd):
+        """Detect start of restore and the point when job file is resumed.
+
+        Need this to not save printer state during restore attempt. Done by sending M117 with constants.
+
+        Args:
+            gcode (str): Parsed GCODE command. None if no known command could be parsed.
+            cmd (str): Command to be sent to the printer.
+        """
+        if gcode and gcode == "M117":
+            if "RESTORE_STARTED" in cmd:
+                self._logger.info("RESTORE_STARTED")
+                self.flag_restore_in_progress = True
+            elif "RESTORE_COMPLETE" in cmd:
+                self._logger.info("RESTORE_COMPLETE")
+                self.flag_restore_in_progress = False
+    # endregion
 
     # region "Flask blueprint routes"
     @octoprint.plugin.BlueprintPlugin.route("/isFailureDetected", methods=["GET"])
@@ -418,18 +486,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         """Allow configuration of injected OctoPrint UI template"""
         return [dict(type="settings", custom_bindings=True, template="settings.jinja2")]
 
-    def _send_status(self, status_type, status_value, status_description=""):
-        """Send data to all registered mesage reveivers
-
-        Args:
-            status_type (str): Type of status message.
-            status_value (any): Actual message.
-            status_description (str, optional): Defaults to "". Human readable message description.
-        """
-        self._plugin_manager.send_plugin_message(self._identifier,
-                                                 dict(type="status", status_type=status_type, status_value=status_value,
-                                                      status_description=status_description))
-
     def get_settings_version(self):
         return 2
 
@@ -486,37 +542,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             cmd_type (str): Type of command, e.g. temperature_poll for temperature polling or sd_status_poll for SD printing status polling.
             gcode (str): Parsed GCODE command. None if no known command could be parsed.
         """
-        if not gcode:
-            return
-
-        if self.flag_is_saving_state:
-            try:
-                if gcode == "G1" or gcode == "G0":
-                    if "X" in cmd:
-                        self.state_position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
-                    if "Y" in cmd:
-                        self.state_position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
-                    if "Z" in cmd:
-                        self.state_position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
-                    if "E" in cmd:
-                        self.state_position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
-                    if "F" in cmd:
-                        self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
-                elif gcode == "M106":
-                    if "S" in cmd:
-                        self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
-                elif gcode == "M107":
-                    if "S" in cmd:
-                        self.state_position["FAN"] = 0
-                elif gcode == "M290":
-                    if "Z" in cmd:
-                        val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
-                        try:
-                            self.state_babystep = self.state_babystep + float(val)
-                        except Exception as e:
-                            self._logger.error("Could not parse babystep: " + e.message)
-            except:
-                self._logger.info("Error getting latest command sent to printer")
+        self.record_current_state(gcode, cmd)
 
     def gcode_received_hook(self, comm, line, *args, **kwargs):
         """Get the returned lines sent by the printer.
@@ -526,41 +552,21 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             line (str): The line received from the printer.
 
         Returns:
-            [type]: [description]
+            str: Modified or untouched line
         """
-        if "FIRMWARE_NAME" in line:
-            # self._logger.info("FIRMWARE_NAME line: {}".format(line))
-            from octoprint.util.comm import parse_firmware_line
-            # Create a dict with all the keys/values returned by the M115 request
-            data = parse_firmware_line(line)
+        return self.detect_babystep_support(line)
 
-            regex = r"Marlin J18([A-Z]{2})_([0-9]{6}_[0-9]{4})_HA"
-            matches = re.search(regex, data['FIRMWARE_NAME'])
-
-            enable_babystep = matches and len(matches.groups()) == 2 and matches.group(1) in ["PT", "PE"]
-            if self.enableBabystep != enable_babystep:
-                self._settings.set_boolean(["enableBabystep"], enable_babystep)
-                self._settings.save()
-
-        return line
-
-    def print_restore_progress_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+    def gcode_queuing_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
         """Get the returned lines sent by the printer.
 
         Args:
-            comm_instance ([type]): [description]
-            phase ([type]): [description]
-            cmd ([type]): [description]
-            cmd_type ([type]): [description]
-            gcode ([type]): [description]
+            comm_instance  (object): The MachineCom instance which triggered the hook.
+            phase (str): The current phase in the command progression, either queuing, queued, sending or sent. Will always match the <phase> of the hook. 
+            cmd (str): Command to be sent to the printer.
+            cmd_type (str): Type of command, e.g. temperature_poll for temperature polling or sd_status_poll for SD printing status polling.
+            gcode (str): Parsed GCODE command. None if no known command could be parsed.
         """
-        if gcode and gcode == "M117":
-            if "RESTORE_STARTED" in cmd:
-                self._logger.info("RESTORE_STARTED")
-                self.flag_restore_in_progress = True
-            elif "RESTORE_COMPLETE" in cmd:
-                self._logger.info("RESTORE_COMPLETE")
-                self.flag_restore_in_progress = False
+        self.detect_restore_phase(gcode, cmd)
 
     def get_update_information(self):
         """Plugin configuration for software update."""
@@ -593,5 +599,5 @@ def __plugin_load__():
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
         "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.gcode_sent_hook,
         "octoprint.comm.protocol.gcode.received": __plugin_implementation__.gcode_received_hook,
-        "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.print_restore_progress_hook
+        "octoprint.comm.protocol.gcode.queuing": __plugin_implementation__.gcode_queuing_hook
     }
