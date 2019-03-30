@@ -8,3 +8,6 @@ dist
 .DS_Store
 *.zip
 *.vscode
+
+backup/
+vscode/sftp.json
