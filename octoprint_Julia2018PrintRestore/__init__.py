@@ -86,6 +86,7 @@ class RepeatedTimer(object):
 class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             octoprint.plugin.EventHandlerPlugin,
                             octoprint.plugin.SettingsPlugin,
+                            octoprint.plugin.AssetPlugin,
                             octoprint.plugin.TemplatePlugin,
                             octoprint.plugin.BlueprintPlugin):
     """OctoPrint print restore plugin for Fracktal Works 3D printers."""
@@ -406,9 +407,15 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                 if self.flag_is_saving_state:
                     self.state_position["T"] = payload["new"]
 
+    def get_assets(self):
+        """Define the static assets the plugin offers."""
+        return dict(
+            js=["js/julia_print_restore.js"],
+        )
+
     def get_template_configs(self):
         """Allow configuration of injected OctoPrint UI template"""
-        return [dict(type="settings", custom_bindings=False)]
+        return [dict(type="settings", custom_bindings=True, template="settings.jinja2")]
 
     def _send_status(self, status_type, status_value, status_description=""):
         """Send data to all registered mesage reveivers
@@ -509,7 +516,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         Returns:
             [type]: [description]
         """
-
         if "FIRMWARE_NAME" in line:
             # self._logger.info("FIRMWARE_NAME line: {}".format(line))
             from octoprint.util.comm import parse_firmware_line
@@ -536,7 +542,6 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             cmd_type ([type]): [description]
             gcode ([type]): [description]
         """
-
         if gcode and gcode == "M117":
             if "RESTORE_STARTED" in cmd:
                 self._logger.info("RESTORE_STARTED")

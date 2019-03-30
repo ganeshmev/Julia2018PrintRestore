@@ -1,0 +1,48 @@
+<div id="settings_julia_print_restore">
+    <h3>{{ _('Julia Print Restore') }}</h3>
+    <hr/>
+
+    <form class="form-horizontal">
+        <div class="control-group">
+            <div class="controls" data-toggle="tooltip" title="{{ _('Enable/Disable Print Restore') }}">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: Config.enabled"> Enable Print Restore
+                </label>
+            </div>
+        </div>
+        <div class="control-group">
+            <div class="controls" data-toggle="tooltip" title="{{ _('Auto restore on machine startup') }}">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: Config.autoRestore"> Auto Restore
+                </label>
+            </div>
+        </div>
+        {# <div class="control-group">
+            <label class="control-label">{{ _('Print Restore') }}</label>
+            <div class="controls" data-toggle="tooltip" title="{{ _('Enable/Disable Print Restore') }}">
+                <select class="select-mini" data-bind="value: ">
+                    <option value="True">{{ _('Enabled') }}</option>
+                    <option value="False">{{ _('Disabled') }}</option>
+                </select>
+            </div>
+        </div> #}
+        <div class="control-group">
+            <label class="control-label">{{ _('Save Progress Interval') }}</label>
+            <div class="controls" data-toggle="tooltip" title="{{ _('Interval between saves') }}">
+                <input type="number" step="any" min="0" class="input-mini text-right" data-bind="value: Config.interval">
+                <span class="add-on">seconds</span>
+                {# <span class="hep-block">{{ _('Interval between saves') }}</span> #}
+            </div>
+        </div>
+        {# <div class="control-group">
+            <label class="control-label">{{ _('Auto Restore') }}</label>
+            <div class="controls" data-toggle="tooltip" title="{{ _('Auto restore on machine startup') }}">
+                <select class="select-mini" data-bind="value: settings.plugins.Julia2018PrintRestore.autoRestore">
+                    <option value="True">{{ _('Enabled') }}</option>
+                    <option value="False">{{ _('Disabled') }}</option>
+                </select>
+                {# <span class="help-block">{{ _('Auto restore on machine startup') }}</span> }
+            </div>
+        </div> #}
+    </form>
+</div>
