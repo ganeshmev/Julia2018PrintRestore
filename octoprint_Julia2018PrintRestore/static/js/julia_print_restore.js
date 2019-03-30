@@ -4,21 +4,16 @@ $(function() {
 
         self.VM_settings = parameters[0];
 
-        self.flashPort = ko.observable(undefined);
-        self.hardwareNotReady = ko.observable("");
-        self.uploadFilename = ko.observable("");
-        self.uploadProgress = ko.observable("");
+        // self.saveConfig = function() {
+        //     var data = {
+        //         plugins: {
+        //             Julia2018PrintRestore: {
 
-        self.saveConfig = function() {
-            var data = {
-                plugins: {
-                    Julia2018PrintRestore: {
-
-                    }
-                }
-            };
-            self.VM_settings.saveData(data);
-        };
+        //             }
+        //         }
+        //     };
+        //     self.VM_settings.saveData(data);
+        // };
 
         self.onDataUpdaterPluginMessage = function(plugin, data) {
             if (plugin !== "Julia2018PrintRestore") {
