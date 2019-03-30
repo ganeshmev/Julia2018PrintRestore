@@ -11,6 +11,11 @@ import json
 import os
 import re
 import logging
+
+from ._version import get_versions
+__version__ = get_versions()['version']
+del get_versions
+
 # TODO:
 '''
 Auto Resurrect
@@ -20,18 +25,27 @@ change code depending on number of toolheads
 '''
 
 
-def isFloat(text):
-    try:
-        float(text)
-        # check for nan/infinity etc.
-        if text.isalpha():
-            return False
-        return True
-    except ValueError:
-        return False
+# def isFloat(text):
+#     try:
+#         float(text)
+#         # check for nan/infinity etc.
+#         if text.isalpha():
+#             return False
+#         return True
+#     except ValueError:
+#         return False
 
 
 class RepeatedTimer(object):
+    """Wrapper for a Timer object that repeatatively calls a function after an interval.
+
+    Args:
+        interval (int): Delay interval in seconds
+        function (object): The "function" to repeat
+        *args: Variable arguments for the "function"
+        **kwargs: Keyword arguments for the "function"
+    """
+
     def __init__(self, interval, function, *args, **kwargs):
         self._timer = None
         self.interval = interval
@@ -41,17 +55,20 @@ class RepeatedTimer(object):
         self.is_running = False
 
     def _run(self):
+        """Helper to call the "function" and set the timer again"""
         self.is_running = False
         self.start()
         self.function(*self.args, **self.kwargs)
 
     def start(self):
+        """Sets the Timer to call the helper"""
         if not self.is_running:
             self._timer = Timer(self.interval, self._run)
             self._timer.start()
             self.is_running = True
 
     def stop(self):
+        """Stop the timer"""
         if self.is_running:
             self._timer.cancel()
             self.is_running = False
@@ -71,120 +88,38 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                             octoprint.plugin.SettingsPlugin,
                             octoprint.plugin.TemplatePlugin,
                             octoprint.plugin.BlueprintPlugin):
+    """OctoPrint print restore plugin for Fracktal Works 3D printers."""
 
-    # __RESTORE_FILE = "/home/pi/print_restore.json"
-    # __TEMP_RESTORE_FILE = __RESTORE_FILE + ".tmp"
-    # __LOG_FILE = "/home/pi/.octoprint/logs/print_restore.log"
-
+    # region "User Prefeences"
     @property
     def enabled(self):
+        """(bool) Get print restore enabled state plugin setting."""
         return self._settings.get_boolean(["enabled"])
 
     @property
     def autoRestore(self):
+        """(bool) Get auto print restore enabled state plugin setting."""
         return self._settings.get_boolean(["autoRestore"])
 
     @property
     def interval(self):
+        """(int) Get printer state monitor interval plugin setting."""
         return self._settings.get_int(["interval"])
 
     @property
     def enableBabystep(self):
+        """(bool) Get babystep monitor enabled state plugin setting."""
         return self._settings.get_boolean(["enableBabystep"])
+    # endregion
 
-    '''+++++++++++++++ Octoprint Startup Functions ++++++++++++++++++++'''
-    def initialize(self):
-        '''
-        Initialises board
-        :return: None
-        '''
-        self._logger.info("Print Restore plugin initialised")
-
-        fh = logging.handlers.RotatingFileHandler(self._settings.get_plugin_logfile_path(postfix="debug"), maxBytes=(2 * 1024 * 1024))
-        fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        # fh.setLevel(logging.DEBUG)
-        self._logger.addHandler(fh)
-
-        basedir = self._settings.getBaseFolder("base")
-        if basedir is not None and os.path.exists(basedir):
-            self.__RESTORE_FILE = os.path.join(basedir, "print_restore.json")
-        else:
-            self.__RESTORE_FILE = "/home/pi/print_restore.json"
-        self.__TEMP_RESTORE_FILE = self.__RESTORE_FILE + ".tmp"
-
-        # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
-        # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
-        # self.interval = float(self._settings.get(["interval"]))
-        self.state_position = {}
-        self.state_babystep = 0
-        self.flag_is_saving_state = False
-        self.flag_restore_in_progress = False
-
-    def on_after_startup(self):
-        '''
-        Method to check if resurection file is avialble during server startup
-        Also stores other basic settings
-        :return: None
-        '''
-        # Initialise Repeated Timer Object
-        self.init_print_state_monitor()
-        # get printer settings
-
-    def get_settings_defaults(self):
-        '''
-        initialises default parameters
-        :return:
-        '''
-        return dict(
-            enabled=True,
-            autoRestore=False,
-            interval=1,
-            enableBabystep=None
-        )
-
-    '''+++++++++++++++ Octoprint Event Callback ++++++++++++++++++++'''
-
-    def on_event(self, event, payload):
-        '''
-        Callback when an event is detected. depending on the event, different things are done.
-        :param event: event to respond to
-        :param payload:
-        :return:
-        '''
-        if self.enabled:
-            if event in (Events.CONNECTED):
-                if self.check_restore_file_exists():
-                    if self.autoRestore:
-                        self.start_restore()
-                # else:
-                #     self.parse_restore_file()
-
-            elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
-                self.delete_restore_file()
-                self.start_printer_state_monitor()
-
-            elif event in Events.PRINT_PAUSED:
-                self.stop_printer_state_monitor()
-
-            elif event in Events.PRINT_DONE:
-                self.stop_printer_state_monitor()
-                self.delete_restore_file()
-
-            elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED, Events.DISCONNECTED):
-                self.stop_printer_state_monitor()
-
-            elif event is Events.TOOL_CHANGE:
-                if self.flag_is_saving_state:
-                    self.state_position["T"] = payload["new"]
-
-    '''+++++++++++++++ Worker Functions ++++++++++++++++++++'''
-    def init_print_state_monitor(self):
+    # region "Printer state monitor"
+    def init_printer_state_monitor(self):
+        """Initialize printer state monitor."""
         if self._timer_printer_state_monitor is None:
             self._timer_printer_state_monitor = RepeatedTimer(self.interval, self.write_restore_file)
 
     def start_printer_state_monitor(self):
-        """Start monitoring and saving printer state
-        """
+        """Start monitoring and saving printer state."""
         self._logger.info("Printer state monitor started")
         self.flag_is_saving_state = True
         self.flag_restore_file_write_in_progress = False
@@ -192,36 +127,32 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         self._timer_printer_state_monitor.start()
 
     def stop_printer_state_monitor(self):
-        '''
-        Stops the repeated timer that saves progress
-        :return:
-        '''
+        """Stop monitoring and saving printer state."""
         self.flag_is_saving_state = False
         self._logger.info("Printer state monitor stopped")
         self._timer_printer_state_monitor.stop()
         self._timer_printer_state_monitor = None
 
     def check_restore_file_exists(self):
-        '''
-        The restore file is present on the USB device and contains sane data
-        :return:
-        '''
+        """Check if restore file exists
+
+        Returns:
+            bool: True if restore file exists
+        """
         if os.path.isfile(self.__RESTORE_FILE):
             return True
         else:
             return False
 
     def write_restore_file(self):
-        '''
-        worker function that does the actual saving to file
-        :return:
-        '''
+        """Write and commit restore file to disk"""
         if self.flag_restore_in_progress or self.flag_restore_file_write_in_progress:
             return
 
         temps = self._printer.get_current_temperatures()
         file = self._printer.get_current_data()
-        data = {"fileName": file["job"]["file"]["name"], "filePos": file["progress"]["filepos"],
+        data = {"fileName": file["job"]["file"]["name"],
+                "filePos": file["progress"]["filepos"],
                 "path": file["job"]["file"]["path"],
                 "tool0Target": temps["tool0"]["target"],
                 "bedTarget": temps["bed"]["target"],
@@ -239,6 +170,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         self.flag_restore_file_write_in_progress = False
 
     def parse_restore_file(self, log=False):
+        """Read and parse restore file data
+            log (bool, optional): Defaults to False. Log parsed data
+
+        Returns:
+            tuple: (status, data) status is True if parsing was successful, False with data set to None otherwise.
+        """
         if self.check_restore_file_exists():
             try:
                 with open(self.__RESTORE_FILE) as f:
@@ -257,58 +194,22 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         return (False, None)
 
     def delete_restore_file(self):
-        '''
-        delets the progress file
-        :return:
-        '''
+        """Delete the print restore file from disk"""
         if self.check_restore_file_exists():
             try:
                 os.remove(self.__RESTORE_FILE)
                 self._logger.info("Restore progress file was deleted")
             except:
                 self._logger.info("Error deleting restore file")
-
-    def gcode_sent_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
-        '''
-        notes the print information on the last sent command to the printer
-        :return:
-        self._currentTool
-        '''
-        if not gcode:
-            return
-
-        if self.flag_is_saving_state:
-            try:
-                if gcode == "G1" or gcode == "G0":
-                    if "X" in cmd:
-                        self.state_position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
-                    if "Y" in cmd:
-                        self.state_position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
-                    if "Z" in cmd:
-                        self.state_position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
-                    if "E" in cmd:
-                        self.state_position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
-                    if "F" in cmd:
-                        self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
-                elif gcode == "M106":
-                    if "S" in cmd:
-                        self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
-                elif gcode == "M107":
-                    if "S" in cmd:
-                        self.state_position["FAN"] = 0
-                elif gcode == "M290":
-                    if "Z" in cmd:
-                        val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
-                        if isFloat(val):
-                            self.state_babystep = self.state_babystep + float(val)
-            except:
-                self._logger.info("Error getting latest command sent to printer")
+    # endregion
 
     def start_restore(self):
-        '''
-        restores the print progress from saved file
-        :return:
-        '''
+        """Try to restore the failed print.
+        Initialize printer temperatures and position to last known state.
+
+        Returns:
+            tuple: (status, error) status is True if printer was initialized to last known state, False and error is not None otherwise.
+        """
         try:
             restore_state = self.parse_restore_file()
             if not restore_state[0]:
@@ -373,14 +274,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             self._logger.error("Restore error\n" + e.message)
             return (False, e.message)
 
-    '''+++++++++++++++ API Functions ++++++++++++++++++++'''
-
+    # region "Flask blueprint routes"
     @octoprint.plugin.BlueprintPlugin.route("/isFailureDetected", methods=["GET"])
     def route_check_restore_file(self):
-        '''
-        API to let client know that storage media has restoration file in it,
-        and restore is possible
-        '''
+        """REST endpoint that checks for a failed print and if restore is possible"""
         if self._printer.is_printing() or self._printer.is_paused():
             return jsonify(status="Printer is already printing", canRestore=False)
         else:
@@ -395,9 +292,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
     @octoprint.plugin.BlueprintPlugin.route("/restore", methods=["POST"])
     def route_restore(self):
-        """
-        Function that restores the print
-        """
+        """REST endpoint to start print restore"""
         if "application/json" not in request.headers["Content-Type"]:
             return make_response("Expected content type JSON", 400)
 
@@ -424,10 +319,12 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
     @octoprint.plugin.BlueprintPlugin.route("/getSettings", methods=["GET"])
     def route_get_settings(self):
-        return jsonify(interval=self.interval, autoRestore=self.autoRestore, enabled=self.enabled)
+        """REST endpoint to get plugin settings"""
+        return jsonify(interval=self.interval, autoRestore=self.autoRestore, enabled=self.enabled, version=__version__)
 
     @octoprint.plugin.BlueprintPlugin.route("/saveSettings", methods=["POST"])
     def route_save_settings(self):
+        """REST endpoint to change plugin settings"""
         if "application/json" not in request.headers["Content-Type"]:
             return make_response("Expected content type JSON", 400)
 
@@ -438,47 +335,118 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         if all(item in data.keys() for item in ("autoRestore", "enabled", "interval")):
             self.on_settings_save(data)
             return make_response("Settings Saved", 200)
+    # endregion
 
-    '''+++++++++++++++ Octoprint Helper Functions ++++++++++++++++++++'''
+    # region "Plugin management"
+    def initialize(self):
+        """Initialize plugin: loggings, restore file path, state, flags"""
+        self._logger.info("Print Restore plugin initialised")
+
+        fh = logging.handlers.RotatingFileHandler(self._settings.get_plugin_logfile_path(postfix="debug"), maxBytes=(2 * 1024 * 1024))
+        fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        # fh.setLevel(logging.DEBUG)
+        self._logger.addHandler(fh)
+
+        basedir = self._settings.getBaseFolder("base")
+        if basedir is not None and os.path.exists(basedir):
+            self.__RESTORE_FILE = os.path.join(basedir, "print_restore.json")
+        else:
+            self.__RESTORE_FILE = "/home/pi/print_restore.json"
+        self.__TEMP_RESTORE_FILE = self.__RESTORE_FILE + ".tmp"
+
+        # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
+        # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
+        # self.interval = float(self._settings.get(["interval"]))
+        self.state_position = {}
+        self.state_babystep = 0
+        self.flag_is_saving_state = False
+        self.flag_restore_in_progress = False
+
+    def on_after_startup(self):
+        """Called just after launch of the server.
+
+        Initialize printer state monitor
+        """
+        self.init_printer_state_monitor()
+
+    def on_event(self, event, payload):
+        """Called by OctoPrint upon processing of a fired event.
+
+        * Start/stop print state monitor
+        * Handle auto restore.
+        * Handle tool change
+
+        Args:
+            event (str): The type of event that got fired
+            payload (dict): The payload as provided with the event
+        """
+        if self.enabled:
+            if event in (Events.CONNECTED):
+                if self.check_restore_file_exists():
+                    if self.autoRestore:
+                        self.start_restore()
+                # else:
+                #     self.parse_restore_file()
+
+            elif event in (Events.PRINT_STARTED, Events.PRINT_RESUMED):
+                self.delete_restore_file()
+                self.start_printer_state_monitor()
+
+            elif event in Events.PRINT_PAUSED:
+                self.stop_printer_state_monitor()
+
+            elif event in Events.PRINT_DONE:
+                self.stop_printer_state_monitor()
+                self.delete_restore_file()
+
+            elif event in (Events.PRINT_FAILED, Events.PRINT_CANCELLED, Events.DISCONNECTED):
+                self.stop_printer_state_monitor()
+
+            elif event is Events.TOOL_CHANGE:
+                if self.flag_is_saving_state:
+                    self.state_position["T"] = payload["new"]
 
     def get_template_configs(self):
-        '''
-        Bindings for the jinja files
-        :return:
-        '''
+        """Allow configuration of injected OctoPrint UI template"""
         return [dict(type="settings", custom_bindings=False)]
 
     def _send_status(self, status_type, status_value, status_description=""):
-        """
-        sends a plugin message, from the SockJS server
-        :param status_type:
-        :param status_value:
-        :param status_description:
-        :return:
+        """Send data to all registered mesage reveivers
+
+        Args:
+            status_type (str): Type of status message.
+            status_value (any): Actual message.
+            status_description (str, optional): Defaults to "". Human readable message description.
         """
         self._plugin_manager.send_plugin_message(self._identifier,
                                                  dict(type="status", status_type=status_type, status_value=status_value,
                                                       status_description=status_description))
 
+    def get_settings_defaults(self):
+        """Define plugin settngs and their default values"""
+        return dict(
+            enabled=True,
+            autoRestore=False,
+            interval=1,
+            enableBabystep=None
+        )
+
     def on_settings_save(self, data):
-        """
-        Saves and updates the file settings of resurection
-        :param data:
-        :return:
-        """
+        """React to changes in plugin settings"""
+        interval = self.interval
         octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
         self._settings.save()
         # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
         # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
         # self.interval = float(self._settings.get(["interval"]))
         self._logger.info("Print Restore settings saved")
-        if self._timer_printer_state_monitor.interval != self.interval:
+        if self._timer_printer_state_monitor.interval != interval:
             if self.flag_is_saving_state:
                 self.stop_printer_state_monitor()
-                self.init_print_state_monitor()
+                self.init_printer_state_monitor()
                 self.start_printer_state_monitor()
             else:
-                self.init_print_state_monitor()
+                self.init_printer_state_monitor()
         if not self.enabled:
             if self._printer.is_printing() or self._printer.is_paused():
                 self.stop_printer_state_monitor()
@@ -486,8 +454,62 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         else:
             if self._printer.is_printing() or self._printer.is_paused():
                 self.start_printer_state_monitor()
+    # endregion
+
+    # region "OctoPrint hooks"
+    def gcode_sent_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        """This phase is triggered just after the command was handed over to the serial connection to the printer.
+
+        Args:
+            comm_instance  (object): The MachineCom instance which triggered the hook.
+            phase (str): The current phase in the command progression, either queuing, queued, sending or sent. Will always match the <phase> of the hook. 
+            cmd (str): Command to be sent to the printer.
+            cmd_type (str): Type of command, e.g. temperature_poll for temperature polling or sd_status_poll for SD printing status polling.
+            gcode (str): Parsed GCODE command. None if no known command could be parsed.
+        """
+        if not gcode:
+            return
+
+        if self.flag_is_saving_state:
+            try:
+                if gcode == "G1" or gcode == "G0":
+                    if "X" in cmd:
+                        self.state_position["X"] = cmd[cmd.index('X') + 1:].split(' ', 1)[0]
+                    if "Y" in cmd:
+                        self.state_position["Y"] = cmd[cmd.index('Y') + 1:].split(' ', 1)[0]
+                    if "Z" in cmd:
+                        self.state_position["Z"] = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+                    if "E" in cmd:
+                        self.state_position["E"] = cmd[cmd.index('E') + 1:].split(' ', 1)[0]
+                    if "F" in cmd:
+                        self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
+                elif gcode == "M106":
+                    if "S" in cmd:
+                        self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
+                elif gcode == "M107":
+                    if "S" in cmd:
+                        self.state_position["FAN"] = 0
+                elif gcode == "M290":
+                    if "Z" in cmd:
+                        val = cmd[cmd.index('Z') + 1:].split(' ', 1)[0]
+                        try:
+                            self.state_babystep = self.state_babystep + float(val)
+                        except Exception as e:
+                            self._logger.error("Could not parse babystep: " + e.message)
+            except:
+                self._logger.info("Error getting latest command sent to printer")
 
     def gcode_received_hook(self, comm, line, *args, **kwargs):
+        """Get the returned lines sent by the printer.
+
+        Args:
+            comm_instance  (object): The MachineCom instance which triggered the hook.
+            line (str): The line received from the printer.
+
+        Returns:
+            [type]: [description]
+        """
+
         if "FIRMWARE_NAME" in line:
             # self._logger.info("FIRMWARE_NAME line: {}".format(line))
             from octoprint.util.comm import parse_firmware_line
@@ -505,6 +527,16 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         return line
 
     def print_restore_progress_hook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        """Get the returned lines sent by the printer.
+
+        Args:
+            comm_instance ([type]): [description]
+            phase ([type]): [description]
+            cmd ([type]): [description]
+            cmd_type ([type]): [description]
+            gcode ([type]): [description]
+        """
+
         if gcode and gcode == "M117":
             if "RESTORE_STARTED" in cmd:
                 self._logger.info("RESTORE_STARTED")
@@ -514,10 +546,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                 self.flag_restore_in_progress = False
 
     def get_update_information(self):
-        """
-        Function for OTA update thrpugh the software update plugin
-        :return:
-        """
+        """Plugin configuration for software update."""
         return dict(
             Julia2018PrintRestore=dict(
                 displayName="Julia Print Restore",
@@ -531,10 +560,11 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                 pip="https://github.com/FracktalWorks/Julia2018PrintRestore/archive/{target_version}.zip"
             )
         )
+    # endregion
 
 
 __plugin_name__ = "Julia Print Restore"
-__plugin_version__ = "1.2.2"
+__plugin_version__ = __version__
 
 
 def __plugin_load__():
