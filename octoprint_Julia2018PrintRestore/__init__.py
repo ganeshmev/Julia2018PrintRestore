@@ -358,6 +358,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         # self.enabled = bool(boolConv(self._settings.get(["enabled"])))
         # self.autoRestore = bool(boolConv(self._settings.get(["autoRestore"])))
         # self.interval = float(self._settings.get(["interval"]))
+        self._timer_printer_state_monitor = None
         self.state_position = {}
         self.state_babystep = 0
         self.flag_is_saving_state = False
@@ -429,6 +430,9 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
                                                  dict(type="status", status_type=status_type, status_value=status_value,
                                                       status_description=status_description))
 
+    def get_settings_version(self):
+        return 2
+
     def get_settings_defaults(self):
         """Define plugin settngs and their default values"""
         return dict(
@@ -437,6 +441,14 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             interval=1,
             enableBabystep=None
         )
+
+    def on_settings_migrate(self, target, current):
+        if target == 2:
+            self._settings.set_boolean(["enabled"], self._settings.get_boolean(["enabled"]))
+            self._settings.set_boolean(["autoRestore"], self._settings.get_boolean(["autoRestore"]))
+            self._settings.set_int(["interval"], self._settings.get_int(["interval"]))
+            self._settings.set_boolean(["enableBabystep"], self._settings.get_boolean(["enableBabystep"]))
+            self._settings.save()
 
     def on_settings_save(self, data):
         """React to changes in plugin settings"""
