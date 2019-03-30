@@ -119,7 +119,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         self.flag_is_saving_state = False
         self._logger.info("Printer state monitor stopped")
         self._timer_printer_state_monitor.stop()
-        self._timer_printer_state_monitor = None
+        # self._timer_printer_state_monitor = None
 
     def check_restore_file_exists(self):
         """Check if restore file exists
@@ -351,7 +351,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
             return jsonify(status="Printer is already printing", canRestore=False)
         else:
             if self.check_restore_file_exists():
-                restore_state = self.parse_restore_file()
+                restore_state = self.parse_restore_file(log=True)
                 if restore_state[0] and "fileName" in restore_state[1].keys():
                     return jsonify(status="failureDetected", canRestore=True, file=restore_state[1]["fileName"])
                 else:
@@ -411,10 +411,11 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
         """Initialize plugin: loggings, restore file path, state, flags"""
         self._logger.info("Print Restore plugin initialised")
 
-        fh = logging.handlers.RotatingFileHandler(self._settings.get_plugin_logfile_path(postfix="debug"), maxBytes=(2 * 1024 * 1024))
-        fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        # fh.setLevel(logging.DEBUG)
-        self._logger.addHandler(fh)
+        debug_file = os.path.join(self._settings.getBaseFolder("logs"), "print_restore.log")
+        file_handler = logging.handlers.RotatingFileHandler(debug_file, maxBytes=(2 * 1024 * 1024))
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        # file_handler.setLevel(logging.DEBUG)
+        self._logger.addHandler(file_handler)
 
         basedir = self._settings.getBaseFolder("base")
         if basedir is not None and os.path.exists(basedir):
@@ -484,7 +485,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
     def get_template_configs(self):
         """Allow configuration of injected OctoPrint UI template"""
-        return [dict(type="settings", custom_bindings=True, template="settings.jinja2")]
+        return [dict(type="settings", custom_bindings=True)]
 
     def get_settings_version(self):
         return 2
