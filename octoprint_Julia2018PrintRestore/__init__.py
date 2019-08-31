@@ -301,14 +301,14 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 					if data["position"]["FAN"] > 0:
 						self._printer.commands("M106 S{}".format(data["position"]["FAN"]))
 
-				commands = ["M420 S1"
+				commands = ["M420 S1",
 							"G90",
 							"G1 Z{} F4000".format(data["position"]["Z"]),
 							"T{}".format(data["position"]["T"]),
 							"G92 E0",
-							"G1 F200 E3"
+							"G1 F200 E3",
 							"G92 E{}".format(data["position"]["E"]),
-							"G1 X{} Y{} F4000".format(data["position"]["X"], data["position"]["Y"]),
+							"G1 X{} Y{} F3000".format(data["position"]["X"], data["position"]["Y"]),
 							"G1 F{}".format(data["position"]["F"])
 							]
 				self._printer.commands(commands)
