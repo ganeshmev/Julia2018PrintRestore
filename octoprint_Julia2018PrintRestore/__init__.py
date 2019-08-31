@@ -294,20 +294,21 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				self._printer.home(["x", "y"])
 				self._printer.commands("G1 X10 Y10 F5000")
 				# self._printer.commands("G1 X0 Y0 Z10 F9000")
-				if "T" in data["position"].keys():
-					self._printer.commands("T{}".format(data["position"]["T"]))
+				if "T" not in data["position"].keys():
+					data["position"]["T"] = 0
+
 				if "FAN" in data["position"].keys():
 					if data["position"]["FAN"] > 0:
 						self._printer.commands("M106 S{}".format(data["position"]["FAN"]))
 
 				commands = ["M420 S1"
 							"G90",
+							"G1 Z{} F4000".format(data["position"]["Z"]),
+							"T{}".format(data["position"]["T"]),
 							"G92 E0",
-							"G1 F200 E10",
-							"G1 F5000",
-							"G1 Z{}".format(data["position"]["Z"]),
+							"G1 F200 E3"
 							"G92 E{}".format(data["position"]["E"]),
-							"G1 X{} Y{}".format(data["position"]["X"], data["position"]["Y"]),
+							"G1 X{} Y{} F4000".format(data["position"]["X"], data["position"]["Y"]),
 							"G1 F{}".format(data["position"]["F"])
 							]
 				self._printer.commands(commands)
