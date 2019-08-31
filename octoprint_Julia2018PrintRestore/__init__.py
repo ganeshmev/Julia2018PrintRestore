@@ -577,6 +577,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		self.detect_restore_phase(gcode, cmd)
 	# endregion
 
+	#region Update Info
 	def get_update_information(self):
 		"""Plugin configuration for software update."""
 		return dict(
