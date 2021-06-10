@@ -275,24 +275,45 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 			if data["fileName"] != "None":   # file name is not none
 				self._printer.commands("M117 RESTORE_STARTED")
 
+				#start heating to prepare for initial move
+
 				if data["bedTarget"] > 0:
-					self._printer.commands("M190 S{}".format(data["bedTarget"]))
+					self._printer.commands("M140 S{}".format(data["bedTarget"]))
+				if "tool0Target" in data.keys():
+					if data["tool0Target"] > 0:
+						self._printer.commands("M104 T0 S140".format(data["tool0Target"]))
+				if "tool1Target" in data.keys():
+					if data["tool1Target"] > 0:
+						self._printer.commands("M104 T1 S140".format(data["tool1Target"]))
+				if "tool0Target" in data.keys():
+					if data["tool0Target"] > 0:
+						self._printer.commands("M109 T0 S140") #just enough heat to remove nozzle without disloging print
+				if "tool1Target" in data.keys():
+					if data["tool1Target"] > 0:
+						self._printer.commands("M109 T1 S140")  #just enough heat to remove nozzle without disloging print
+				# Move the print head
+				self._printer.commands("T0")
+				self._printer.home("z")
+				self._printer.home(["x", "y"])
+
+				#Set to actual heating temperatures
+
 				if "tool0Target" in data.keys():
 					if data["tool0Target"] > 0:
 						self._printer.commands("M104 T0 S{}".format(data["tool0Target"]))
 				if "tool1Target" in data.keys():
 					if data["tool1Target"] > 0:
 						self._printer.commands("M104 T1 S{}".format(data["tool1Target"]))
+				if data["bedTarget"] > 0:
+					self._printer.commands("M190 S{}".format(data["bedTarget"]))
 				if "tool0Target" in data.keys():
 					if data["tool0Target"] > 0:
 						self._printer.commands("M109 T0 S{}".format(data["tool0Target"]))
 				if "tool1Target" in data.keys():
 					if data["tool1Target"] > 0:
 						self._printer.commands("M109 T1 S{}".format(data["tool1Target"]))
-				self._printer.commands("T0")
-				self._printer.home("z")
-				self._printer.home(["x", "y"])
-				self._printer.commands("G1 X10 Y10 F5000")
+
+				self._printer.commands("G1 X10 Y10 F2000")
 				# self._printer.commands("G1 X0 Y0 Z10 F9000")
 				if "T" not in data["position"].keys():
 					data["position"]["T"] = 0
