@@ -1,4 +1,6 @@
 # coding=utf-8
+from setuptools import setup
+import versioneer
 
 ########################################################################################################################
 ### Do not forget to adjust the following variables to your own plugin.
@@ -13,7 +15,7 @@ plugin_package = "octoprint_Julia2018PrintRestore"
 plugin_name = "Octoprint-Julia2018PrintRestore"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "1.3.1"
+plugin_version = versioneer.get_version()   # replaced by versioneer
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
