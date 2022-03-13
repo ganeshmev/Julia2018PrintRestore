@@ -173,16 +173,17 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				with open(self.__RESTORE_FILE) as f:
 					txt = f.read()
 					txt = txt.encode('ascii', 'ignore')
-					txt = "".join(c for c in txt if 31 < ord(c) < 127)
+					txt = txt.decode()
+					#txt = "".join(c for c in txt if 31 < ord(c) < 127)
 					try:
 						data = json.loads(txt)
 						if log:
 							self._logger.info("Print restore data:\n" + json.dumps(data))
 						return (True, data)
 					except Exception as e:
-						self._logger.error("Invalid JSON data in restore file: {}\n{}".format(txt, e.message))
+						self._logger.error("Invalid JSON data in restore file: {}\n{}".format(txt, str(e)))
 			except Exception as e:
-				self._logger.error("Could not open restore file\n" + e.message)
+				self._logger.error("Could not open restore file\n" + str(e))
 		return (False, None)
 
 	def delete_restore_file(self):
@@ -252,7 +253,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 						try:
 							self.state_babystep = self.state_babystep + float(val)
 						except Exception as e:
-							self._logger.error("Could not parse babystep: " + e.message)
+							self._logger.error("Could not parse babystep: " + str(e))
 			except:
 				self._logger.info("Error getting latest command sent to printer")
 	# endregion
@@ -277,19 +278,19 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 				#start heating to prepare for initial move
 
-				if data["bedTarget"] > 0:
-					self._printer.commands("M140 S{}".format(data["bedTarget"]))
+				if float(data["bedTarget"]) > 0:
+					self._printer.commands("M140 S{}".format(float(data["bedTarget"])))
 				if "tool0Target" in data.keys():
-					if data["tool0Target"] > 0:
-						self._printer.commands("M104 T0 S140".format(data["tool0Target"]))
+					if float(data["tool0Target"]) > 0:
+						self._printer.commands("M104 T0 S140".format(float(data["tool0Target"])))
 				if "tool1Target" in data.keys():
-					if data["tool1Target"] > 0:
-						self._printer.commands("M104 T1 S140".format(data["tool1Target"]))
+					if float(data["tool1Target"]) > 0:
+						self._printer.commands("M104 T1 S140".format(float(data["tool1Target"])))
 				if "tool0Target" in data.keys():
-					if data["tool0Target"] > 0:
+					if float(data["tool0Target"]) > 0:
 						self._printer.commands("M109 T0 S140") #just enough heat to remove nozzle without disloging print
 				if "tool1Target" in data.keys():
-					if data["tool1Target"] > 0:
+					if float(data["tool1Target"]) > 0:
 						self._printer.commands("M109 T1 S140")  #just enough heat to remove nozzle without disloging print
 				# Move the print head
 				self._printer.commands("T0")
@@ -299,19 +300,19 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				#Set to actual heating temperatures
 
 				if "tool0Target" in data.keys():
-					if data["tool0Target"] > 0:
-						self._printer.commands("M104 T0 S{}".format(data["tool0Target"]))
+					if float(data["tool0Target"]) > 0:
+						self._printer.commands("M104 T0 S{}".format(float(data["tool0Target"])))
 				if "tool1Target" in data.keys():
-					if data["tool1Target"] > 0:
-						self._printer.commands("M104 T1 S{}".format(data["tool1Target"]))
-				if data["bedTarget"] > 0:
-					self._printer.commands("M190 S{}".format(data["bedTarget"]))
+					if float(data["tool1Target"] )> 0:
+						self._printer.commands("M104 T1 S{}".format(float(data["tool1Target"])))
+				if float(data["bedTarget"]) > 0:
+					self._printer.commands("M190 S{}".format(float(data["bedTarget"])))
 				if "tool0Target" in data.keys():
-					if data["tool0Target"] > 0:
-						self._printer.commands("M109 T0 S{}".format(data["tool0Target"]))
+					if float(data["tool0Target"]) > 0:
+						self._printer.commands("M109 T0 S{}".format(float(data["tool0Target"])))
 				if "tool1Target" in data.keys():
-					if data["tool1Target"] > 0:
-						self._printer.commands("M109 T1 S{}".format(data["tool1Target"]))
+					if float(data["tool1Target"]) > 0:
+						self._printer.commands("M109 T1 S{}".format(float(data["tool1Target"])))
 
 				self._printer.commands("G1 X10 Y10 F2000")
 				# self._printer.commands("G1 X0 Y0 Z10 F9000")
@@ -319,27 +320,27 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 					data["position"]["T"] = 0
 
 				if "FAN" in data["position"].keys():
-					if data["position"]["FAN"] > 0:
-						self._printer.commands("M106 S{}".format(data["position"]["FAN"]))
+					if int(data["position"]["FAN"]) > 0:
+						self._printer.commands("M106 S{}".format(int(data["position"]["FAN"])))
 
 				commands = ["M420 S1",
 							"G90",
-							"G1 Z{} F4000".format(data["position"]["Z"]),
-							"T{}".format(data["position"]["T"]),
+							"G1 Z{} F4000".format(float(data["position"]["Z"])),
+							"T{}".format(float(data["position"]["T"])),
 							"G92 E0",
 							"G1 F200 E3",
-							"G92 E{}".format(data["position"]["E"]),
-							"G1 X{} Y{} F3000".format(data["position"]["X"], data["position"]["Y"]),
-							"G1 F{}".format(data["position"]["F"])
+							"G92 E{}".format(float(data["position"]["E"])),
+							"G1 X{} Y{} F3000".format(float(data["position"]["X"]), float(data["position"]["Y"])),
+							"G1 F{}".format(float(data["position"]["F"]))
 							]
 				self._printer.commands(commands)
 
 				if "babystep" in data.keys():
-					if data["babystep"] != 0:
-						self._printer.commands("M290 Z{}".format(data["babystep"]))
+					if float(data["babystep"]) != 0:
+						self._printer.commands("M290 Z{}".format(float(data["babystep"])))
 
 				self._printer.select_file(path=self._file_manager.path_on_disk("local", data["fileName"]),
-										  sd=False, printAfterSelect=True, pos=data["filePos"])
+										  sd=False, printAfterSelect=True, pos=int(data["filePos"]))
 
 				self._printer.commands("M117 RESTORE_COMPLETE")
 
@@ -350,8 +351,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 				self._logger.error("Did not find print job filename in restore file\n" + json.dumps(data))
 				return (False, "Gcode file name is none")
 		except Exception as e:
-			self._logger.error("Restore error\n" + e.message)
-			return (False, e.message)
+			self._logger.error("Restore error\n" + str(e))
+			return (False, str(e))
 
 	def detect_restore_phase(self, gcode, cmd):
 		"""Detect start of restore and the point when job file is resumed.
