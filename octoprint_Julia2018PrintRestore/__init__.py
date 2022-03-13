@@ -620,7 +620,7 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 
 __plugin_name__ = "Julia Print Restore"
 __plugin_version__ = __version__
-__plugin_pythoncompat__ = ">=3,<4"
+__plugin_pythoncompat__ = ">=2.7,<4"
 
 
 def __plugin_load__():
