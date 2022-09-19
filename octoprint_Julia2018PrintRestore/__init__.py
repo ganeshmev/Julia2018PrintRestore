@@ -136,30 +136,32 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		"""Write and commit restore file to disk"""
 		if self.flag_restore_in_progress or self.flag_restore_file_write_in_progress:
 			return
+		try:
+			temps = self._printer.get_current_temperatures()
+			file = self._printer.get_current_data()
+			data = {"fileName": file["job"]["file"]["name"],
+					"filePos": file["progress"]["filepos"],
+					"path": file["job"]["file"]["path"],
+					"tool0Target": temps["tool0"]["target"],
+					"bedTarget": temps["bed"]["target"],
+					"position": self.state_position,
+					"babystep": self.state_babystep if self.enableBabystep else 0
+					}
+			if "tool1" in temps.keys():
+				if temps["tool1"]["target"] is not None:
+					data["tool1Target"] = temps["tool1"]["target"]
 
-		temps = self._printer.get_current_temperatures()
-		file = self._printer.get_current_data()
-		data = {"fileName": file["job"]["file"]["name"],
-				"filePos": file["progress"]["filepos"],
-				"path": file["job"]["file"]["path"],
-				"tool0Target": temps["tool0"]["target"],
-				"bedTarget": temps["bed"]["target"],
-				"position": self.state_position,
-				"babystep": self.state_babystep if self.enableBabystep else 0
-				}
-		if "tool1" in temps.keys():
-			if temps["tool1"]["target"] is not None:
-				data["tool1Target"] = temps["tool1"]["target"]
+			if data["filePos"] is None or "Z" not in data["position"].keys():  # prevents saving when file is garbage
+				return
 
-		if data["filePos"] is None or "Z" not in data["position"].keys():  # prevents saving when file is garbage
-			return
-
-		self.flag_restore_file_write_in_progress = True
-		with open(self.__TEMP_RESTORE_FILE, 'w') as restoreFile:
-			json.dump(data, restoreFile)
-			os.fsync(restoreFile)
-		os.rename(self.__TEMP_RESTORE_FILE, self.__RESTORE_FILE)
-		self.flag_restore_file_write_in_progress = False
+			self.flag_restore_file_write_in_progress = True
+			with open(self.__TEMP_RESTORE_FILE, 'w') as restoreFile:
+				json.dump(data, restoreFile)
+				os.fsync(restoreFile)
+			os.rename(self.__TEMP_RESTORE_FILE, self.__RESTORE_FILE)
+			self.flag_restore_file_write_in_progress = False
+		except Exception as e:
+			self._logger.error("Could not write to restore file\n" + str(e))
 
 	def parse_restore_file(self, log=False):
 		"""Read and parse restore file data
@@ -449,8 +451,10 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 		basedir = self._settings.getBaseFolder("base")
 		if basedir is not None and os.path.exists(basedir):
 			self.__RESTORE_FILE = os.path.join(basedir, "print_restore.json")
+
 		else:
 			self.__RESTORE_FILE = "/home/pi/print_restore.json"
+		self._logger.info("Path of restore file: " + self.__RESTORE_FILE)
 		self.__TEMP_RESTORE_FILE = self.__RESTORE_FILE + ".tmp"
 
 		# self.enabled = bool(boolConv(self._settings.get(["enabled"])))
