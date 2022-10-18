@@ -245,7 +245,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 						self.state_position["F"] = cmd[cmd.index('F') + 1:].split(' ', 1)[0]
 				elif gcode == "M106":
 					if "S" in cmd:
-						self.state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
+						self.
+                        state_position["FAN"] = cmd[cmd.index('S') + 1:].split(' ', 1)[0]
 				elif gcode == "M107":
 					if "S" in cmd:
 						self.state_position["FAN"] = 0
@@ -322,8 +323,8 @@ class Julia2018PrintRestore(octoprint.plugin.StartupPlugin,
 					data["position"]["T"] = 0
 
 				if "FAN" in data["position"].keys():
-					if int(data["position"]["FAN"]) > 0:
-						self._printer.commands("M106 S{}".format(int(data["position"]["FAN"])))
+					if float(data["position"]["FAN"]) > 0:
+						self._printer.commands("M106 S{}".format(float(data["position"]["FAN"])))
 
 				commands = ["M420 S1",
 							"G90",
